@@ -172,16 +172,17 @@
 
     <h2><span class="n">5.</span> Compute Requirements</h2>
     <p>
-      <b>GPU-intensive (cloud H100 via Modal).</b> Two stages: (1)
+      <b>GPU-intensive (multi-GPU HPC cluster, SLURM).</b> Two stages: (1)
       <b>fine-tune the ungated backbone + train the dual-head predictor</b> on
       WSI tiles, with a <b>deep ensemble across architectures</b> for the
       epistemic term &mdash; on the order of tens of GPU-hours across five
       organs, plus the throughput-bound one-time tiling + embedding-extraction
       pass (Xenium-5K is the largest); (2) lightweight post-hoc conformal on
       CPU. Mixed precision, gradient checkpointing, and embedding caches keep
-      each backbone within a single H100; ensembling and the organ panel scale
-      out elastically on Modal. Fits the 192&nbsp;GB budget. Dependencies:
-      PyTorch, <b>Modal</b>, <code>timm</code>, scanpy/anndata, MAPIE/crepes.
+      each backbone within one A100/H100; ensembling and the organ panel
+      distribute across nodes via <code>torchrun</code>/DDP and array jobs. Fits
+      the 192&nbsp;GB budget. Dependencies: PyTorch (DDP), <code>timm</code>,
+      scanpy/anndata, MAPIE/crepes.
     </p>
 
     <h2><span class="n">6.</span> Expected Deliverables</h2>
@@ -197,7 +198,7 @@
       </li>
       <li>
         Selective-risk&ndash;coverage results across the organ panel + the
-        panel-scaling ablation; Modal training pipeline.
+        panel-scaling ablation; SLURM/DDP training pipeline.
       </li>
       <li>
         A short paper targeting <b>WACV&nbsp;2026</b>, pre-registered and fully
@@ -235,7 +236,7 @@
     </ul>
 
     <footer>
-      Public data (GEO GSE243280). Compute: Modal (H100). Code &amp;
+      Public data (GEO GSE243280). Compute: multi-GPU HPC cluster. Code &amp;
       pre-registration: github.com/aayanAW/unidentifiability-oracle-he-st
     </footer>
   </body>
