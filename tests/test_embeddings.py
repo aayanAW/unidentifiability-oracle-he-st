@@ -67,11 +67,61 @@ def test_lazy_window_reader_reads_at_requested_pixel(tmp_path):
     assert patches[1].max() == 0, "out-of-bounds center stays zero-padded"
 
 
+def test_channels_first_ome_tiff_is_transposed_not_zeroed(tmp_path):
+    """A (C,Y,X) OME-TIFF must be detected and transposed so patches carry tissue, not all-zero (review HIGH)."""
+    import tifffile
+
+    img_cf = np.zeros((3, 400, 400), np.uint8)
+    img_cf[:, 184:216, 184:216] = (
+        200  # bright square at pixel (200,200), channels-first
+    )
+    p = tmp_path / "cf.ome.tif"
+    tifffile.imwrite(str(p), img_cf)
+
+    patches, in_bounds = _read_windows_lazy(p, np.array([[200.0, 200.0]]), patch_px=64)
+    assert in_bounds == 1
+    assert patches[0, 32, 32].max() == 200, (
+        "channels-first image must not yield all-zero patches"
+    )
+
+
+def test_extract_patches_raises_when_all_out_of_bounds(tmp_path):
+    """The SB4 invariant: 0 in-bounds means a bad homography -> refuse to embed all-zero patches (review HIGH)."""
+    import tifffile
+
+    from src.embeddings import _extract_patches
+
+    p = tmp_path / "small.ome.tif"
+    tifffile.imwrite(str(p), np.zeros((300, 300, 3), np.uint8))
+    far = np.array([[1e6, 1e6], [2e6, 2e6]])  # microns far outside, H=None scales to px
+    try:
+        _extract_patches(p, far, None, patch_px=64, um_per_px=0.2125)
+    except RuntimeError:
+        return
+    raise AssertionError("expected RuntimeError on 0 in-bounds niches")
+
+
+def test_non_uint8_image_rejected(tmp_path):
+    import tifffile
+
+    p = tmp_path / "u16.ome.tif"
+    tifffile.imwrite(str(p), (np.ones((128, 128, 3)) * 1000).astype(np.uint16))
+    try:
+        _read_windows_lazy(p, np.array([[64.0, 64.0]]), patch_px=32)
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError for non-uint8 H&E")
+
+
 if __name__ == "__main__":
     import tempfile
 
     test_um_to_px_inverts_homography_into_he_pixels()
     test_um_to_px_no_homography_scales_microns_to_pixels()
     with tempfile.TemporaryDirectory() as d:
-        test_lazy_window_reader_reads_at_requested_pixel(Path(d))
+        d = Path(d)
+        test_lazy_window_reader_reads_at_requested_pixel(d)
+        test_channels_first_ome_tiff_is_transposed_not_zeroed(d)
+        test_extract_patches_raises_when_all_out_of_bounds(d)
+        test_non_uint8_image_rejected(d)
     print("ALL embeddings TESTS PASS")

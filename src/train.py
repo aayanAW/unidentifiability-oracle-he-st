@@ -28,7 +28,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from .predictor import DualHeadOracle, beta_nll_loss
+from .predictor import DualHeadOracle, beta_nll_loss, make_backbone
 
 
 @dataclass(frozen=True)
@@ -77,6 +77,15 @@ def maybe_init_distributed() -> tuple[bool, int, int]:
     if torch.cuda.is_available():
         torch.cuda.set_device(local_rank)
     return True, local_rank, dist.get_rank()
+
+
+def _make_grad_scaler(enabled: bool):
+    """Version-robust AMP scaler: torch>=2.3 `torch.amp.GradScaler('cuda', ...)` (no deprecation warning),
+    falling back to the `torch.cuda.amp` namespace on torch 2.0-2.2 (the local env is 2.0)."""
+    try:
+        return torch.amp.GradScaler("cuda", enabled=enabled)
+    except (AttributeError, TypeError):
+        return torch.cuda.amp.GradScaler(enabled=enabled)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -133,7 +142,7 @@ def fit_dual_head(
         train_module.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
     )
     use_amp = cfg.amp and device.type == "cuda"
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    scaler = _make_grad_scaler(use_amp)
 
     history: dict[str, list[float]] = {"train_loss": [], "val_loss": []}
     for epoch in range(cfg.epochs):
@@ -282,8 +291,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--batch-size", type=int, default=None)
     ap.add_argument("--beta", type=float, default=None)
     ap.add_argument("--device", type=str, default=None)
-    ap.add_argument("--ensemble", type=int, default=1)
+    ap.add_argument("--ensemble", type=int, default=None)
     ap.add_argument("--trunk", type=int, nargs="+", default=[512, 256])
+    ap.add_argument(
+        "--backbone",
+        type=str,
+        default=None,
+        help="ungated timm backbone for END-TO-END mode (e.g. vit_small_patch14_dinov2.lvd142m); "
+        "requires --data with image patches (N,3,H,W). Omit for frozen-embedding mode.",
+    )
+    ap.add_argument(
+        "--confirmatory",
+        action="store_true",
+        help="mark the run/checkpoint confirmatory (only for the pre-registered UNI/Virchow2 encoders).",
+    )
     args = ap.parse_args(argv)
 
     distributed, _local_rank, rank = maybe_init_distributed()
@@ -304,6 +325,32 @@ def main(argv: list[str] | None = None) -> int:
         beta=args.beta if args.beta is not None else float(ov.get("beta", 0.5)),
         device=args.device,
     )
+    backbone_name = args.backbone or ov.get("backbone")
+    ensemble = (
+        args.ensemble if args.ensemble is not None else int(ov.get("ensemble", 1))
+    )
+
+    # END-TO-END mode: build the ungated backbone (the cluster step). It consumes image patches, so the
+    # data must be 4D (N,3,H,W); a 2D embedding .npz is the frozen-embedding mode (backbone stays None).
+    backbone = None
+    in_dim = int(X.shape[1])
+    encoder_name = "frozen-embeddings"
+    if backbone_name:
+        if X.ndim != 4:
+            ap.error(
+                f"--backbone {backbone_name} is end-to-end mode and needs image patches (N,3,H,W); "
+                f"got X.ndim={X.ndim}. Drop --backbone to train on frozen embeddings."
+            )
+        backbone, in_dim = make_backbone(backbone_name, pretrained=True, freeze=False)
+        encoder_name = backbone_name
+    # honesty: only the pre-registered gated encoders are confirmatory (preregistration.md sec 10)
+    is_confirmatory = bool(args.confirmatory) and backbone_name in {
+        "uni",
+        "uni2",
+        "virchow2",
+        "MahmoodLab/UNI",
+        "paige-ai/Virchow2",
+    }
 
     n = len(X)
     rng = np.random.default_rng(0)
@@ -312,25 +359,28 @@ def main(argv: list[str] | None = None) -> int:
     val_idx, train_idx = perm[:n_val], perm[n_val:]
 
     out = Path(args.out)
-    for m in range(args.ensemble):
+    for m in range(ensemble):
         model = DualHeadOracle(
             n_genes=int(Y.shape[1]),
-            in_dim=int(X.shape[1]),
+            in_dim=in_dim,
+            backbone=backbone,
             trunk_dims=tuple(args.trunk),
         )
         model, hist = fit_dual_head(
             model, X, Y, train_idx, val_idx, replace(cfg, seed=cfg.seed + m)
         )
         if rank == 0:
-            ckpt = out / ("model.pt" if args.ensemble == 1 else f"model_{m}.pt")
+            ckpt = out / ("model.pt" if ensemble == 1 else f"model_{m}.pt")
             save_checkpoint(
                 ckpt,
                 model,
                 meta={
                     "n_genes": int(Y.shape[1]),
-                    "in_dim": int(X.shape[1]),
+                    "in_dim": in_dim,
                     "trunk": list(args.trunk),
                     "final_val_loss": hist["val_loss"][-1],
+                    "encoder_name": encoder_name,  # audit: never let a frozen/exploratory run pass as UNI
+                    "is_confirmatory": is_confirmatory,
                 },
                 epoch=cfg.epochs,
             )

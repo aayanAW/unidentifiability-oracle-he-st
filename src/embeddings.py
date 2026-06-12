@@ -184,21 +184,46 @@ def _extract_patches(
     """
     he_path = _ensure_gunzipped(Path(he_path))
     centers_px = _um_to_px(np.asarray(centers_um, dtype=float), H, um_per_px)
-    patches, _in_bounds = _read_windows_lazy(he_path, centers_px, patch_px)
+    patches, in_bounds = _read_windows_lazy(he_path, centers_px, patch_px)
+    # The SB4 fix's correctness invariant is that essentially all niche centers map in-bounds (rollout 14:
+    # 399/399 on breast). A near-zero count means a wrong/garbage homography or um_per_px -> the embeddings
+    # would be all-zero constants and any downstream U fabricated. Surface it loudly instead of silently.
+    n = len(centers_px)
+    if in_bounds == 0:
+        raise RuntimeError(
+            "0 niche centers landed in-bounds in the H&E -- the homography or um_per_px is wrong "
+            "(SB4). Refusing to embed all-zero patches (would fabricate U)."
+        )
+    if in_bounds < 0.9 * n:
+        import warnings
+
+        warnings.warn(
+            f"[embeddings] only {in_bounds}/{n} niche centers in-bounds -- check the homography CSV "
+            f"and um_per_px (SB4 invariant is ~all-in-bounds).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     return patches
 
 
 def _ensure_gunzipped(path: Path) -> Path:
-    """A .gz OME-TIFF cannot be opened as a lazy zarr store; gunzip it once to a sibling and reuse it."""
+    """A .gz OME-TIFF cannot be opened as a lazy zarr store; gunzip it once to a sibling and reuse it.
+
+    Atomic: decompress to a .tmp sibling then rename, so an interrupted decompress (SIGKILL / OOM / cluster
+    preemption) never leaves a truncated .ome.tif that a later run would silently reuse and fail to read.
+    """
     if path.suffix != ".gz":
         return path
     out = path.with_suffix("")  # drop the trailing .gz
-    if not out.exists():
-        import gzip
-        import shutil
+    if out.exists():
+        return out
+    import gzip
+    import shutil
 
-        with gzip.open(path, "rb") as src, open(out, "wb") as dst:
-            shutil.copyfileobj(src, dst, length=1 << 22)
+    tmp = out.with_name(out.name + ".tmp")
+    with gzip.open(path, "rb") as src, open(tmp, "wb") as dst:
+        shutil.copyfileobj(src, dst, length=1 << 22)
+    tmp.rename(out)  # atomic on POSIX
     return out
 
 
@@ -208,6 +233,8 @@ def _read_windows_lazy(
     """Read patch_px windows at the given H&E pixel centers via a lazy zarr store (audit SB4 port).
 
     Returns ((n, patch_px, patch_px, 3) uint8 patches, n_in_bounds). Out-of-bounds centers stay zero-padded.
+    Handles both channels-last (Y,X,C) and channels-first (C,Y,X) OME-TIFFs (other organs in the
+    pre-registered scope can be channels-first; the breast 10x bundle is channels-last).
     """
     import tifffile
     import zarr
@@ -217,7 +244,27 @@ def _read_windows_lazy(
     arr = (
         z[0] if isinstance(z, zarr.hierarchy.Group) else z
     )  # pyramidal series -> level 0
-    h, w = int(arr.shape[0]), int(arr.shape[1])
+    if (
+        np.dtype(arr.dtype) != np.uint8
+    ):  # per-tile renorm would make embeddings globally inconsistent
+        raise ValueError(
+            f"expected a uint8 H&E image, got dtype={arr.dtype}; normalize to uint8 before embed_bins."
+        )
+
+    shp = arr.shape
+    channels_first = arr.ndim == 3 and shp[0] in (3, 4) and shp[0] < shp[-1]
+    if channels_first:
+        import warnings
+
+        warnings.warn(
+            f"[embeddings] channels-first OME-TIFF {tuple(shp)} -> transposing windows to (H,W,C).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        h, w = int(shp[1]), int(shp[2])
+    else:
+        h, w = int(shp[0]), int(shp[1])
+
     half = patch_px // 2
     out = np.zeros((len(centers_px), patch_px, patch_px, 3), np.uint8)
     in_bounds = 0
@@ -227,11 +274,13 @@ def _read_windows_lazy(
         xe, ye = min(w, x0 + patch_px), min(h, y0 + patch_px)
         if xe <= xs or ye <= ys:
             continue
-        tile = np.asarray(arr[ys:ye, xs:xe])
+        tile = (
+            np.moveaxis(np.asarray(arr[:, ys:ye, xs:xe]), 0, -1)
+            if channels_first
+            else np.asarray(arr[ys:ye, xs:xe])
+        )
         if tile.ndim == 2:  # grayscale -> stack to 3 channels
             tile = np.stack([tile] * 3, axis=-1)
-        if tile.dtype != np.uint8:
-            tile = (255 * (tile / (tile.max() + 1e-8))).astype(np.uint8)
         out[k, ys - y0 : ye - y0, xs - x0 : xe - x0] = tile[..., :3]
         in_bounds += 1
     return out, in_bounds

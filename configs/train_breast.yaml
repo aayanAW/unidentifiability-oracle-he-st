@@ -9,5 +9,5 @@ beta: 0.5 # beta-NLL (Seitzer et al. 2022); 0.5 keeps heteroscedastic signal wit
 grad_clip: 5.0
 trunk: [512, 256]
 ensemble: 5 # deep ensemble -> epistemic term + independent-f' arm (audit C3)
-backbone: vit_small_patch14_dinov2.lvd142m # ungated DINOv2-S (end-to-end mode); no UNI/Virchow2 license blocker
+backbone: vit_small_patch14_dinov2.lvd142m # ungated DINOv2-S; APPLIED ONLY in end-to-end mode (BACKBONE= or --backbone). Ignored for frozen-embedding runs.
 niche_bin_um: 300 # K4 clears only at >= ~300um on breast (rollout 11); finer is exploratory/negative

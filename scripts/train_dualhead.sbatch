@@ -1,12 +1,17 @@
 #!/bin/bash
-# SLURM launcher for the dual-head oracle end-to-end fine-tune (multi-GPU, torchrun/DDP).
+# SLURM launcher for the dual-head oracle (multi-GPU, torchrun/DDP). NOT Modal -- user runs on a cluster.
 #
-# This is the CLUSTER step only (plan.md "Direction update"): end-to-end backbone fine-tune + scaling to
-# 5 organs + Xenium-5K. The frozen-embedding result runs cluster-free on a Mac
-# (experiments/trained_oracle_breast.py). NOT Modal -- user runs on a SLURM cluster.
+# DEFAULT MODE = frozen-embedding ensemble scale-up: trains the dual head on the pre-cached DINOv2-S
+# embeddings (data/cache/dualhead_breast.npz from experiments/trained_oracle_breast.py), but at scale
+# (multi-GPU deep ensemble, more epochs) than the Mac run. This is EXPLORATORY (frozen ungated encoder).
 #
-# Submit:  sbatch scripts/train_dualhead.sbatch
-# Override:  DATA=... CONFIG=... OUT=... ENSEMBLE=5 EPOCHS=300 sbatch scripts/train_dualhead.sbatch
+# END-TO-END MODE (the pre-registered cluster step, plan.md "Direction update"): pass BACKBONE=<timm name>
+# AND a DATA .npz of image patches (X shape (N,3,H,W)); src/train.py then builds the backbone and
+# fine-tunes the whole stack. Without BACKBONE the `backbone` yaml key is intentionally ignored (frozen).
+#
+# Submit (frozen scale-up):  sbatch scripts/train_dualhead.sbatch
+# End-to-end:  BACKBONE=vit_small_patch14_dinov2.lvd142m DATA=data/cache/patches_breast.npz sbatch scripts/train_dualhead.sbatch
+# Override:  DATA=... CONFIG=... OUT=... ENSEMBLE=5 EPOCHS=300 [BACKBONE=...] sbatch scripts/train_dualhead.sbatch
 #
 # One task per node so srun launches a single torchrun per node, which then spawns one worker per GPU
 # (the standard multi-node torchrun-under-SLURM idiom -- avoids the srun x torchrun double-spawn).
@@ -34,6 +39,7 @@ CONFIG="${CONFIG:-configs/train_breast.yaml}"
 OUT="${OUT:-runs/dualhead_breast}"
 ENSEMBLE="${ENSEMBLE:-5}"
 EPOCHS="${EPOCHS:-300}"
+BACKBONE="${BACKBONE:-}"  # set -> end-to-end fine-tune; unset -> frozen-embedding scale-up
 
 mkdir -p runs "$OUT"
 
@@ -41,14 +47,20 @@ mkdir -p runs "$OUT"
 git rev-parse HEAD > "$OUT/git_sha.txt" 2>/dev/null || true
 sha256sum "$CONFIG" > "$OUT/config_hash.txt" 2>/dev/null || true
 
+BACKBONE_ARG=()
+[ -n "$BACKBONE" ] && BACKBONE_ARG=(--backbone "$BACKBONE")
+
+# --rdzv-id pins each SLURM job to a unique rendezvous so two jobs on the same node never collide on the port.
 srun torchrun \
   --nnodes="$SLURM_NNODES" \
   --nproc-per-node="$GPUS_PER_NODE" \
   --rdzv-backend=c10d \
+  --rdzv-id="$SLURM_JOB_ID" \
   --rdzv-endpoint="$MASTER_ADDR:$MASTER_PORT" \
   -m src.train \
   --data "$DATA" \
   --config "$CONFIG" \
   --out "$OUT" \
   --ensemble "$ENSEMBLE" \
-  --epochs "$EPOCHS"
+  --epochs "$EPOCHS" \
+  "${BACKBONE_ARG[@]}"

@@ -87,7 +87,10 @@ def oof_dual_head(
             n_genes=g, in_dim=X.shape[1], trunk_dims=trunk, dropout=0.1
         )
         model, _ = fit_dual_head(model, Xs, Y, tr, te, cfg)
-        mean, var = model.predict(torch.from_numpy(Xs[te].astype(np.float32)))
+        dev = next(
+            model.parameters()
+        ).device  # model may be on mps/cuda; from_numpy is CPU (review fix)
+        mean, var = model.predict(torch.from_numpy(Xs[te].astype(np.float32)).to(dev))
         oof_mean[te] = mean.cpu().numpy()
         oof_var[te] = var.cpu().numpy()
     return oof_mean, oof_var
@@ -99,9 +102,10 @@ def _efficiency(order_score: np.ndarray, error: np.ndarray) -> dict:
     curve = risk_coverage_curve(order_score, error)
     a = aurc(curve)
     a_oracle = aurc(risk_coverage_curve(error, error))  # defer true-highest-error first
-    a_random = float(
-        error.mean()
-    )  # uninformative deferral keeps risk at the full-set mean
+    # the random-ordering AURC is the constant mean-risk integrated over the SAME (truncated) coverage grid,
+    # not error.mean() (which is ~5% larger); using the curve's own coverage points keeps eff in [0,1].
+    cov = curve[:, 0]
+    a_random = aurc(np.column_stack([cov, np.full_like(cov, error.mean())]))
     denom = a_random - a_oracle
     eff = (a_random - a) / denom if denom > 1e-12 else 0.0
     # risk on the retained set at 50% coverage
@@ -196,12 +200,16 @@ def main() -> int:
     # that clips U's spread) defer better? Isolates floor-clipping vs a genuinely weak variance head.
     eff_rawDDH = _efficiency(rawvar_ddh, error_ddh)
 
-    # audit-C1 check: on the most identifiable (low-error) genes, did training shrink U?
-    pred = error_ddh <= np.percentile(error_ddh, 33)
+    # audit-C1 check: on the BASELINE-identifiable genes (low RF error -- a symmetric, non-self-referential
+    # set so the RF side is not assessed only on DDH-easy genes), did the trained head shrink U vs RF?
+    pred = error_rf <= np.percentile(error_rf, 33)
     c1 = (float(np.median(U_rf[pred])), float(np.median(U_ddh[pred])))
     sp_rf = spearmanr(U_rf, error_rf).correlation
     sp_ddh = spearmanr(U_ddh, error_ddh).correlation
     sp_rawvar = spearmanr(rawvar_ddh, error_ddh).correlation
+    # epistemic=zeros: the DDH is single-seed, so spatial_structure tests the RAW residual variance on the
+    # top-U genes (an UPPER BOUND on aleatoric; the RF path subtracts a bootstrap-ensemble epistemic). Any
+    # structure found here is therefore conservative -- compare against the RF Moran's I with that caveat.
     ddh_struct = spatial_structure(
         TriadData(centers, X, z1, z2, np.zeros_like(z1), None),
         type(
@@ -242,13 +250,17 @@ def main() -> int:
     print("-" * 72)
     print("selective-risk-coverage efficiency (1=oracle deferral, 0=random):")
     print(
-        f"  end-to-end system   RF : eff={eff_rf['efficiency']:.3f}  AURC={eff_rf['aurc']:.4f} risk@50%={eff_rf['risk50']:.4f}"
+        "  NOTE: the two self-normalized rows below use DIFFERENT error denominators (each system's own "
+        "OOF error) and are NOT a head-to-head comparison; the 'ranking on DDH error' row IS (same error)."
     )
     print(
-        f"  end-to-end system   DDH: eff={eff_ddh['efficiency']:.3f}  AURC={eff_ddh['aurc']:.4f} risk@50%={eff_ddh['risk50']:.4f}"
+        f"  self-normalized   RF : eff={eff_rf['efficiency']:.3f}  AURC={eff_rf['aurc']:.4f} risk@50%={eff_rf['risk50']:.4f}"
     )
     print(
-        f"  ranking on DDH error: RF-U eff={eff_rankRF['efficiency']:.3f}  vs  DDH-U eff={eff_rankDDH['efficiency']:.3f}"
+        f"  self-normalized   DDH: eff={eff_ddh['efficiency']:.3f}  AURC={eff_ddh['aurc']:.4f} risk@50%={eff_ddh['risk50']:.4f}"
+    )
+    print(
+        f"  HEAD-TO-HEAD (rank on DDH error): RF-U eff={eff_rankRF['efficiency']:.3f}  vs  DDH-U eff={eff_rankDDH['efficiency']:.3f}"
     )
     print(
         f"  DIAGNOSTIC: DDH RAW-variance (no floor subtraction) eff={eff_rawDDH['efficiency']:.3f}  "
@@ -263,6 +275,10 @@ def main() -> int:
         X=X.astype(np.float32),
         Y=z_est.astype(np.float32),
         coords=centers,
+        # label the artifact so a downstream/cluster load can never mistake exploratory frozen DINOv2-S
+        # embeddings for a confirmatory UNI/end-to-end run (preregistration.md sec 10; embeddings.py H7).
+        encoder_name=np.array(mf.encoder_name),
+        is_confirmatory=np.bool_(mf.is_confirmatory),
     )
     results = repo / "experiments" / "results"
     results.mkdir(parents=True, exist_ok=True)
