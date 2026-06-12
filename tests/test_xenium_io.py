@@ -58,8 +58,8 @@ def test_binning_shapes_and_counts_conserved():
     rng = np.random.default_rng(0)
     xy, counts = _make_section(rng)
     sec = XeniumSection(xy, counts, [f"g{i}" for i in range(counts.shape[1])])
-    centers, pb, ncell = bin_pseudobulk(sec, bin_um=100.0)
-    assert centers.shape[0] == pb.shape[0] == ncell.shape[0]
+    keys, centers, pb, ncell = bin_pseudobulk(sec, bin_um=100.0)
+    assert keys.shape[0] == centers.shape[0] == pb.shape[0] == ncell.shape[0]
     assert pb.shape[1] == counts.shape[1]
     # pseudobulk conserves total counts and total cells
     assert np.isclose(pb.sum(), counts.sum())

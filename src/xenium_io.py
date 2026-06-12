@@ -63,18 +63,34 @@ def extract_members(
     Lets a caller pull `cell_feature_matrix.h5` + `cells.parquet` + `gene_panel.json` out of the 9.2 GB
     bundle without unpacking transcripts/morphology, then delete the zip (see scripts/fetch_data.sh).
     """
+    import shutil
+    import stat
+
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
     out: list[Path] = []
+    seen: set[str] = set()
     with zipfile.ZipFile(zip_path) as zf:
-        for name in zf.namelist():
-            if name.endswith("/"):
+        for info in zf.infolist():
+            name = info.filename
+            if name.endswith("/") or not any(name.endswith(s) for s in wanted_suffixes):
                 continue
-            if any(name.endswith(suf) for suf in wanted_suffixes):
-                flat = dest / Path(name).name
-                with zf.open(name) as src, open(flat, "wb") as dst:
-                    dst.write(src.read())
-                out.append(flat)
+            if stat.S_ISLNK(
+                info.external_attr >> 16
+            ):  # audit H11: never materialize symlink members
+                continue
+            base = Path(
+                name
+            ).name  # flatten -> Path.name also neutralizes ../ traversal
+            if base in seen:  # audit H11: refuse silent basename-collision overwrite
+                raise ValueError(f"duplicate member basename in zip: {base!r}")
+            seen.add(base)
+            flat = dest / base
+            with zf.open(info) as src, open(flat, "wb") as dst:
+                shutil.copyfileobj(
+                    src, dst, length=1 << 20
+                )  # audit SB5: chunked, no whole-member read
+            out.append(flat)
     return out
 
 
@@ -187,15 +203,19 @@ def read_panel(path: str | Path) -> set[str]:
 
 
 def bin_pseudobulk(
-    section: XeniumSection, bin_um: float
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Aggregate cells into square `bin_um` niches. Returns (bin_centers(m,2), pb_counts(m,G), n_cells(m,)).
+    section: XeniumSection, bin_um: float, origin: np.ndarray | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Aggregate cells into square `bin_um` niches. Returns (keys_ij(m,2), centers(m,2), pb(m,G), ncell(m,)).
 
-    pb_counts = summed raw counts per bin; library-size + log1p normalization is applied later, after
-    the two replicates' bins are matched, so both are normalized on a shared footing.
+    `origin` pins the grid: when matching two serial replicates, BOTH must bin from the SAME origin so a
+    given physical niche maps to the SAME integer key in both (audit C5 -- otherwise per-section origins
+    shift the grids and the same niche hashes differently). `keys_ij` are the integer grid indices in that
+    shared frame; match on them directly (never via center-rounding). pb_counts are summed raw counts;
+    library-size + log1p normalization happens after matching so both replicates share a footing.
     """
     xy = section.coords
-    origin = xy.min(0)
+    if origin is None:
+        origin = xy.min(0)
     ij = np.floor((xy - origin) / bin_um).astype(np.int64)
     keys, inv = np.unique(ij, axis=0, return_inverse=True)
     m, g = keys.shape[0], section.counts.shape[1]
@@ -203,7 +223,7 @@ def bin_pseudobulk(
     np.add.at(pb, inv, section.counts)
     ncell = np.bincount(inv, minlength=m).astype(np.float64)
     centers = origin + (keys + 0.5) * bin_um
-    return centers, pb, ncell
+    return keys, centers, pb, ncell
 
 
 def rigid_register(
@@ -300,11 +320,11 @@ def matched_bins(
     aff = rigid_register(sec2.coords, sec1.coords, bin_um)
     sec2_reg = XeniumSection(apply_affine(sec2.coords, aff), sec2.counts, sec2.genes)
 
-    c1, pb1, n1 = bin_pseudobulk(sec1, bin_um)
-    c2, pb2, n2 = bin_pseudobulk(sec2_reg, bin_um)
+    # SHARED origin so a physical niche has the SAME integer key in both replicates (audit C5).
+    origin = np.minimum(sec1.coords.min(0), sec2_reg.coords.min(0))
+    key1, c1, pb1, n1 = bin_pseudobulk(sec1, bin_um, origin=origin)
+    key2, c2, pb2, n2 = bin_pseudobulk(sec2_reg, bin_um, origin=origin)
 
-    key1 = _bin_keys(c1, bin_um)
-    key2 = _bin_keys(c2, bin_um)
     map2 = {tuple(k): i for i, k in enumerate(key2)}
     rows1, rows2, centers = [], [], []
     for i, k in enumerate(key1):

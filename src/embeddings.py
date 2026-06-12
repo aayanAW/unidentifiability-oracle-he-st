@@ -51,22 +51,37 @@ def embed_bins(
     Xenium micron coordinates into H&E pixel space so the patch is drawn at the right place. um_per_px is
     the Xenium pixel size (0.2125 um) used only if no homography is supplied.
     """
-    cache = _cache_path(cache_dir, he_image_path, bin_centers_um, encoder, patch_px)
-    if cache.exists():
-        d = np.load(cache, allow_pickle=True)
-        return MorphFeatures(
-            d["features"], str(d["encoder_name"]), bool(d["is_confirmatory"])
-        )
+    requested_gated = encoder in GATED_ENCODERS
+    conf_cache = _cache_path(
+        cache_dir, he_image_path, bin_centers_um, encoder, patch_px, tag="confirmatory"
+    )
+    fb_cache = _cache_path(
+        cache_dir, he_image_path, bin_centers_um, encoder, patch_px, tag="fallback"
+    )
+    # audit H7: a GATED request never reuses a fallback cache, so a confirmatory run is retried once UNI
+    # access is fixed (instead of silently returning the stale ungated embeddings forever).
+    if conf_cache.exists():
+        return _load_cache(conf_cache)
+    if not requested_gated and fb_cache.exists():
+        return _load_cache(fb_cache)
 
     H = _load_homography(homography_csv)
     patches = _extract_patches(he_image_path, bin_centers_um, H, patch_px, um_per_px)
     feats, name, confirmatory = _run_encoder(patches, encoder)
 
+    cache = conf_cache if confirmatory else fb_cache
     cache.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         cache, features=feats, encoder_name=name, is_confirmatory=confirmatory
     )
     return MorphFeatures(feats, name, confirmatory)
+
+
+def _load_cache(path: Path) -> MorphFeatures:
+    d = np.load(path, allow_pickle=True)
+    return MorphFeatures(
+        d["features"], str(d["encoder_name"]), bool(d["is_confirmatory"])
+    )
 
 
 def _run_encoder(patches: np.ndarray, encoder: str) -> tuple[np.ndarray, str, bool]:
@@ -216,8 +231,14 @@ def _load_homography(csv: str | Path | None) -> np.ndarray | None:
     return None
 
 
-def _cache_path(cache_dir, he_path, centers, encoder, patch_px) -> Path:
+def _cache_path(
+    cache_dir, he_path, centers, encoder, patch_px, tag="confirmatory"
+) -> Path:
+    # key includes patch geometry + a content fingerprint of the bin centers so a different patch size or
+    # niche layout never silently reuses stale embeddings (audit H7). `tag` separates confirmatory (gated)
+    # caches from fallback ones so a gated request never returns the fallback.
+    fp = f"{float(centers.sum()):.3f}|{float((centers**2).sum()):.3f}"
     key = hashlib.sha1(
-        f"{Path(he_path).name}|{centers.shape}|{float(centers.sum()):.3f}|{encoder}|{patch_px}".encode()
+        f"{Path(he_path).name}|{centers.shape}|{fp}|{encoder}|{patch_px}|{tag}".encode()
     ).hexdigest()[:16]
-    return Path(cache_dir) / f"morph_{encoder}_{key}.npz"
+    return Path(cache_dir) / f"morph_{encoder}_{tag}_{key}.npz"

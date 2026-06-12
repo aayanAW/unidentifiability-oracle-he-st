@@ -24,10 +24,21 @@ def bh_fdr(pvals: np.ndarray, alpha: float = 0.05) -> np.ndarray:
     return p <= cutoff
 
 
-def grid_weights(coords: np.ndarray, radius: float = 1.5) -> np.ndarray:
-    """Binary spatial weight matrix: neighbours within `radius` (row-standardised)."""
+def grid_weights(coords: np.ndarray, radius: float | None = None) -> np.ndarray:
+    """Binary spatial weight matrix: neighbours within `radius` (row-standardised).
+
+    `radius=None` (default) derives the radius from the data so the same code works on the synthetic unit
+    grid AND on real Xenium niche centers spaced ~100 um apart (audit SB1: a fixed radius=1.5 finds zero
+    neighbours on real coords -> degenerate Moran's I). The data-driven radius is 1.5x the median
+    nearest-neighbour spacing.
+    """
     diff = coords[:, None, :] - coords[None, :, :]
     d2 = np.sum(diff**2, axis=-1)
+    if radius is None:
+        d2_nn = d2.copy()
+        np.fill_diagonal(d2_nn, np.inf)  # exclude self (no 0*inf=nan)
+        nn = np.sqrt(d2_nn.min(axis=1))
+        radius = 1.5 * float(np.median(nn))
     w = (d2 <= radius**2).astype(float)
     np.fill_diagonal(w, 0.0)
     rs = w.sum(axis=1, keepdims=True)
