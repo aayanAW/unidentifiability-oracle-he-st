@@ -1,0 +1,16 @@
+# Phase 1 feasibility config (breast). Real source locked: GSE243280 GSM7780153 + GSM7780154.
+data:
+  source: synthetic # synthetic | real
+  real_dir: data/
+  noise_floor_source: "GSE243280 GSM7780153(Rep1)+GSM7780154(Rep2)" # locked, true technical replicate
+oracle:
+  n_models: 8 # ensemble size (epistemic via disagreement)
+  n_folds: 4 # out-of-fold residual estimation
+  n_boot: 200 # bootstrap for per-gene U p-value
+  fdr_alpha: 0.05
+thresholds: # pre-registered (feasibility.md)
+  confirm_fraction: 0.20
+  kill_fraction: 0.05
+  gap_confirm: 0.10
+  gap_kill: 0.05
+encoder: MahmoodLab/UNI # real morphology features (Virchow2 as second backbone)

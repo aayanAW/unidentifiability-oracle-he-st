@@ -1,0 +1,20 @@
+# data + heavy artifacts (never commit raw spatial data)
+data/
+*.h5ad
+*.h5
+*.zarr
+*.parquet
+*.tif
+*.tiff
+*.ckpt
+*.pt
+*.npz
+wandb/
+runs/
+# python
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+# secrets
+.env
