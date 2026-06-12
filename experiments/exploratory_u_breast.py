@@ -62,8 +62,11 @@ def _patches_lazy(he_tif: Path, centers_um, H, patch_px=224, um_per_px=0.2125):
     arr = z[0] if isinstance(z, zarr.hierarchy.Group) else z
     h, w = arr.shape[0], arr.shape[1]
     if H is not None:
-        pts = np.hstack([centers_um, np.ones((len(centers_um), 1))])
-        proj = (H @ pts.T).T
+        # 10x homography maps H&E px -> Xenium px; we want the inverse, applied to Xenium PIXELS
+        # (centers are um -> /um_per_px). Verified: 100% of cells land in-bounds (audit SB4 fix).
+        xen_px = centers_um / um_per_px
+        pts = np.hstack([xen_px, np.ones((len(xen_px), 1))])
+        proj = (np.linalg.inv(H) @ pts.T).T
         px = proj[:, :2] / proj[:, 2:3]
     else:
         px = centers_um / um_per_px
