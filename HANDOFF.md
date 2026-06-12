@@ -2,30 +2,35 @@
 
 Single entry point for resuming in a fresh session. Read this first, then `decision-ledger.jsonl`.
 
-## ⟶ RESUME HERE (rollout 14, 2026-06-12) — build the trainable HYBRID
+## ⟶ RESUME HERE (rollout 15, 2026-06-12) — Tier-2 HYBRID built; cluster end-to-end is next
 
-**`main` is current** — PR #1 (rollouts 8–14) merged at `2f50a08`. Public repo `aayanAW/unidentifiability-oracle-he-st`. Start the next session with `git checkout main && git checkout -b feat/hybrid-build`. State since the original handoff below:
+**Branch `feat/hybrid-build`** (6 commits, pushed to public `aayanAW/unidentifiability-oracle-he-st`; PR not yet opened). Off `main` @ `2f50a08`. The Tier-2 cluster-free HYBRID build is DONE; the first trained-oracle result is in.
 
-- **Cross-model audit done** (rollout 9, `audit_report.md`): Claude + Codex gpt-5.5. 5 confirmed criticals.
-- **Audit fixes done** (rollout 10): nonlinear RF substrate + failable gate w/ negative control, σ²_reg explicit, 2× noise-floor, spatial-block CV, KNN f′, bash-3.2 fetch, adaptive `grid_weights`, zip hardening. Gate green, ruff clean.
-- **Real data downloaded** (public GEO): breast Xenium Rep1/Rep2 matrices + H&E (1.4 GB ea) + homography. `data/` (gitignored). Disk ~12 GB free — **other 4 organs NOT downloaded (won't fit; not needed yet)**.
-- **Real noise floor** (rollout 11): K4 clears at **≥300 µm niches** (18.5% of 313 genes), dominates <250 µm. Resolution-constrained.
-- **Exploratory real U** (rollout 14, frozen DINOv2-S, EXPLORATORY not confirmatory): after the **SB4 registration fix** (`Hinv @ Xenium-px`), morph→ST predicts **58% of genes** (R² max 0.38, median +0.073), biologically coherent, U spatially structured. **Vacuity risk de-risked. GREEN.** Run: `python3 experiments/exploratory_u_breast.py data --bin-um 300 --encoder vit_small_patch14_dinov2.lvd142m`.
-- **Direction (rollout 12):** move to a **GPU-trained HYBRID** `f` on an **HPC cluster (SLURM/DDP — NOT Modal)**; fine-tune an **ungated** backbone (removes the UNI blocker). Not a novelty pivot. Proposal (`proposal.pdf`) reflects it.
+**What landed this session (rollout 15):**
 
-**Next actions (Tier-2 HYBRID build — cluster-independent to write + smoke-test; full run on cluster):**
+1. **SB4 registration ported** into the real pipeline (`src/embeddings.py` + `src/loaders.py`): `inv(H) @ (centers_um/um_per_px)` + a memory-safe lazy zarr window reader. Validated **399/399 niches in-bounds** on real breast (the rollout-14 invariant).
+2. **`src/predictor.py`** — `DualHeadOracle`: ungated DINOv2-S backbone (or frozen embeddings) → shared trunk → mean head + log-variance head; **β-NLL** loss (Seitzer 2022).
+3. **`src/train.py`** — `fit_dual_head` (AMP cuda-only, DDP when `WORLD_SIZE>1`, deep ensemble, checkpointing) + CLI (frozen-embedding and `--backbone` end-to-end modes) + **`scripts/train_dualhead.sbatch`** (torchrun-under-SLURM).
+4. **`src/oracle.py`** — `risk_coverage_curve` + `aurc` (the selective-risk-coverage utility metric).
+5. **`experiments/trained_oracle_breast.py`** — the FIRST trained-oracle result.
 
-1. Port the SB4 registration fix (`experiments/exploratory_u_breast.py:_patches_lazy`) into `src/embeddings.py` + `src/loaders.py` (real pipeline).
-2. `src/predictor.py` — trainable `f`: ungated backbone (`vit_small_patch14_dinov2.lvd142m` or CTransPath) + H&E→ST head + dual variance head (β-NLL).
-3. `src/train.py` — AMP, checkpointing, `torchrun`/DDP-ready, deep-ensemble; SLURM `sbatch`. Smoke-test on CPU/MPS (tiny), full run on cluster.
-4. Wire trained `f` as the `run_oracle` substrate; recompute U vs the frozen baseline (does training tighten it?).
-5. Compute the **selective-risk-coverage curve** (the real utility metric) — the headline result.
+**First trained-oracle result (breast @300 µm, frozen DINOv2-S, EXPLORATORY — `python3 experiments/trained_oracle_breast.py data --bin-um 300`):**
 
-**Push to GitHub as you write** — commit + push per logical unit (registration port, predictor, train script, gate update), not one big end-commit. Always public. Append a rollout-N entry to `decision-ledger.jsonl` per decision.
+- The **frozen-RF raw-variance oracle is a STRONG real selective system**: efficiency **0.784**, Spearman(U,error)=**0.916**. The C1 oracle machinery works on real tissue.
+- The **trained dual-head on FROZEN embeddings does NOT beat it**: head-to-head RF-U eff **0.524** vs DDH-U eff **−0.074**; DDH raw-variance diagnostic **0.386**. `U_ddh` collapses under floor-subtraction; mean head R² max 0.396, 130/313 genes.
+- **Verdict MIXED, reported straight (not a kill).** Frozen embeddings + ~399 niches favor the RF ensemble variance; the dual-head's advantage is the **pre-registered end-to-end cluster bet** (jointly-trained backbone + 5 organs). No hyperparameter chasing.
 
-**Cluster boundary:** steps 1–4 above are CLUSTER-FREE on this Mac (incl. training the dual-head on FROZEN cached embeddings = first trained-oracle result). Cluster (SLURM/DDP — NOT Modal) is ONLY for the later end-to-end backbone fine-tune + scaling to 5 organs + Xenium-5K.
+**Review:** 4-dim adversarial Workflow → 14 confirmed findings (2-skeptic verified) → **all fixed** (channels-first all-zero patches, SB4 in-bounds invariant, real `--backbone` wiring, artifact labeling, GradScaler, efficiency normalizer, atomic gunzip, device-safe OOF, `--rdzv-id`, RF-defined C1 mask, …). 6 test suites green, ruff clean.
 
-- Deps installed this session: `tifffile`, `timm`, `zarr<3`. Awaiting cluster access (user runs on cluster, not Modal).
+**Next actions (the cluster end-to-end bet — needs cluster access):**
+
+1. Build the **image-patch dataset** `data/cache/patches_breast.npz` (X=(N,3,224,224) uint8 via `embeddings._extract_patches`, Y=z_est) for true end-to-end mode.
+2. Run `BACKBONE=vit_small_patch14_dinov2.lvd142m DATA=data/cache/patches_breast.npz sbatch scripts/train_dualhead.sbatch` on the cluster (end-to-end fine-tune).
+3. Scale to **5 organs + Xenium-5K**; re-evaluate: does a jointly-trained `f` lift DDH-U above the RF baseline and clear the 15% utility floor (K2)?
+
+**Then:** open the PR for `feat/hybrid-build` once the cluster result lands (or sooner if merging the build is wanted). Append rollout-N to `decision-ledger.jsonl` per decision; commit + push per logical unit.
+
+**Cluster boundary:** steps 1–3 are the cluster step (SLURM/DDP — NOT Modal). Everything in rollout 15 ran cluster-free on this Mac. Deps: `tifffile`, `timm`, `zarr<3`, `torch 2.0.0` (MPS).
 
 ---
 
