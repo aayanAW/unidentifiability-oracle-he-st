@@ -62,7 +62,6 @@ def simulate_triad(
         .reshape(-1, 2)
         .astype(float)
     )
-    n = coords.shape[0]
 
     morph = _smooth_field(rng, coords, n_feat, scale=2.5)  # smooth morphology field
 
@@ -86,7 +85,6 @@ def simulate_triad(
     z_clean = np.stack(z_cols, axis=1)  # (n, n_genes)
     gene_class = np.array(classes)
 
-    s2 = xen_noise**2
     xen_rep1 = z_clean + rng.normal(0, xen_noise, z_clean.shape)
     xen_rep2 = z_clean + rng.normal(0, xen_noise, z_clean.shape)
 
