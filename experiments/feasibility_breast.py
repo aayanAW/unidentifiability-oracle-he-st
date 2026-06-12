@@ -11,9 +11,12 @@ GSE243280 loader once wired. Prints the pre-registered CONFIRM / KILL / AMBIGUOU
 from __future__ import annotations
 
 import argparse
+import hashlib
+import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -24,6 +27,24 @@ CONFIRM_FRACTION = 0.20
 KILL_FRACTION = 0.05
 GAP_CONFIRM = 0.10
 GAP_KILL = 0.05
+
+_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _run_stamp() -> str:
+    """Reproducibility stamp per run: git SHA + config-hash (audit H6 / preregistration.md sec 9)."""
+    try:
+        sha = subprocess.check_output(
+            ["git", "-C", str(_ROOT), "rev-parse", "HEAD"], text=True
+        ).strip()
+        dirty = subprocess.call(["git", "-C", str(_ROOT), "diff", "--quiet"]) != 0
+    except Exception:
+        sha, dirty = "unknown", False
+    cfg = _ROOT / "configs" / "feasibility_breast.yaml"
+    cfg_hash = (
+        hashlib.sha256(cfg.read_bytes()).hexdigest()[:16] if cfg.exists() else "none"
+    )
+    return f"git_sha={sha}{'+dirty' if dirty else ''} config_hash={cfg_hash}"
 
 
 def load(args):
@@ -63,10 +84,22 @@ def main():
     is_unident = triad.gene_class == "C" if triad.gene_class is not None else None
     is_dropout = triad.gene_class == "B" if triad.gene_class is not None else None
 
-    res_f = run_oracle(triad, seed=args.seed)  # f
+    # sigma2_reg: 0.0 for synthetic (no registration step); estimated on real serial-section data (C2).
+    if args.real:
+        from src.oracle import registration_sigma2
+
+        sigma2_reg = registration_sigma2(triad, predictor="rf", seed=args.seed)
+        print(f"[repro] {_run_stamp()}")
+        print(f"sigma2_reg (median over genes): {float(np.median(sigma2_reg)):.4f}")
+    else:
+        sigma2_reg = 0.0
+
+    res_f = run_oracle(
+        triad, sigma2_reg=sigma2_reg, predictor="rf", seed=args.seed
+    )  # f
     res_fp = run_oracle(
-        triad, seed=args.seed + 101
-    )  # independent f' (different bootstrap/feature draws)
+        triad, sigma2_reg=sigma2_reg, predictor="knn", seed=args.seed + 101
+    )  # independent-ARCHITECTURE f' (audit C3)
 
     frac = res_f.flagged.mean()
     spatial = spatial_structure(triad, res_f, seed=args.seed)

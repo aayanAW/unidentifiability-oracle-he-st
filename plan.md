@@ -47,3 +47,14 @@ Plan status from audit: **Risky until patched** — sound architecture, but two 
 - **Phase 3 (method):** use a **deep ensemble / MC-dropout of `f`** for epistemic/aleatoric separation — `U` is the aleatoric residual conditional on the ensemble's recoverable signal, not raw `Var[ẑ]`.
 - **~~Top risk #0 (CRITICAL)~~ → RESOLVED 2026-06-12:** the replicate noise-floor source DOES exist (GSE243280 Rep1/Rep2, true technical replicate). Risk closed; only the `panel.json` identity check remains.
 - **Construct-validity risk (CRITICAL):** `Var[ẑ]` conflates spatial heterogeneity with unpredictability for non-optimal `f` → ensemble-based aleatoric isolation + claim downgraded to a conditional upper bound.
+
+## Direction update (2026-06-12) — move to a GPU-trained HYBRID (rollout 12)
+
+The frozen-encoder + RF/Ridge substrate was the **C1 feasibility vehicle** (deliberately light, for a cheap decisive gate). The audit (rollout 9) confirmed its load-bearing weakness — **C1: a low-capacity `f` under-fits and inflates `U`** (identifiable genes keep `U≈0.4`, not ≈0). The principled fix is **more model capacity, which means compute**, so we now execute the planned **HYBRID** stage as the main method, not a frozen baseline:
+
+- **Trained `f`:** fine-tune an **ungated** pathology backbone (CTransPath / DINOv2) + a high-capacity H&E→ST head (TRIPLEX/BLEEP/STFlow-class), end-to-end on WSI tiles. A stronger `f` leaves only irreducible residual → tightens `U` toward true unidentifiability (directly addresses audit C1). **Side benefit: removes the UNI/Virchow2 gated-license blocker.**
+- **HYBRID dual-head oracle:** learned prediction + variance head (β-NLL + gradient surgery), calibrated by post-hoc spatial-Mondrian conformal.
+- **Deep ensemble across architectures** for the epistemic term (replaces the RF bootstrap); also serves the independent-`f′` arm (audit C3).
+- **Compute:** GPU-intensive — **multi-GPU HPC cluster (SLURM)**, tens of GPU-hours over 5 organs + Xenium-5K embedding extraction. Mixed precision + checkpointing + embedding cache fit each backbone on one A100/H100; ensembling/organs distribute via `torchrun`/DDP + array jobs. Within the 192 GB budget. (Not Modal — user runs on cluster.)
+- **Staging unchanged / fallback intact:** the frozen post-hoc oracle (C1) remains an always-available, reproducible fallback paper, so HYBRID is an upgrade, not a dependency (mitigates training-instability risk, plan risk #3).
+- **Scope note:** this is **not a novelty pivot** — same oracle claim (still 7.5/10), same pre-registration; only the substrate moves from frozen to trained. The contribution remains the oracle; the predictor class is wrapped, not claimed.

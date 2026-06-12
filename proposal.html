@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @page {
+        size: A4;
+        margin: 9mm 12mm;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      body {
+        font-family: "Georgia", "Times New Roman", serif;
+        font-size: 8.7pt;
+        line-height: 1.26;
+        color: #16181d;
+        margin: 0;
+      }
+      header {
+        border-bottom: 2px solid #1f3a5f;
+        padding-bottom: 5px;
+        margin-bottom: 8px;
+      }
+      h1 {
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        font-size: 15pt;
+        margin: 0 0 2px;
+        color: #1f3a5f;
+        letter-spacing: -0.2px;
+      }
+      .sub {
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        font-size: 8.6pt;
+        color: #4a5160;
+      }
+      .meta {
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        font-size: 8.4pt;
+        color: #4a5160;
+        margin-top: 3px;
+      }
+      h2 {
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        font-size: 9.5pt;
+        color: #1f3a5f;
+        margin: 7px 0 2px;
+        padding-bottom: 1px;
+        border-bottom: 0.6px solid #c9d2de;
+      }
+      h2 .n {
+        color: #b07a2e;
+        font-weight: 700;
+      }
+      p {
+        margin: 0 0 3px;
+        text-align: justify;
+      }
+      ul {
+        margin: 1px 0 3px;
+        padding-left: 15px;
+      }
+      li {
+        margin: 0 0 1.5px;
+      }
+      .lead {
+        font-weight: 600;
+        color: #1f3a5f;
+      }
+      footer {
+        margin-top: 6px;
+        border-top: 0.6px solid #c9d2de;
+        padding-top: 3px;
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        font-size: 7.6pt;
+        color: #6b7280;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>
+        An Unidentifiability Oracle for H&amp;E&nbsp;&rarr;&nbsp;Spatial
+        Transcriptomics
+      </h1>
+      <div class="sub">
+        ML Lab Research Proposal &mdash; trustworthy selective prediction for
+        virtual spatial transcriptomics
+      </div>
+      <div class="meta"><b>Team:</b> Aayan Alwani</div>
+    </header>
+
+    <h2><span class="n">1.</span> Problem Statement</h2>
+    <p>
+      Predicting spatial gene expression from routine H&amp;E histology promises
+      cheap, slide-wide molecular maps, but current models give point
+      predictions with no trustworthy notion of when to believe them. A weak
+      prediction&ndash;truth correlation is ambiguous: the gene may be
+      <i>biologically unpredictable</i> from morphology, or the measurement may
+      simply be <i>noisy / dropout-corrupted</i> &mdash; and existing
+      uncertainty and abstention methods conflate the two. We build an
+      <span class="lead">unidentifiability oracle</span> that separates
+      intrinsic biological unpredictability from technical measurement noise, so
+      a selective-prediction layer abstains on genuinely unidentifiable genes
+      rather than merely noisy ones.
+    </p>
+
+    <h2><span class="n">2.</span> Proposed Approach</h2>
+    <p>
+      We
+      <span class="lead">train a high-capacity H&amp;E&rarr;ST predictor</span>
+      (TRIPLEX / BLEEP / STFlow-class) end-to-end, fine-tuning an
+      <b>ungated</b> pathology backbone (CTransPath / DINOv2) on the WSI tiles.
+      Per-gene unidentifiability <i>U</i> is the deep-ensemble out-of-fold
+      aleatoric residual <b>minus</b> an externally measured noise floor (a true
+      Xenium technical replicate) <b>minus</b> registration-induced variance; a
+      learned <b>dual-head</b> oracle (prediction + variance head,
+      &ldquo;HYBRID&rdquo;) is then calibrated by post-hoc spatial-Mondrian
+      conformal for coverage-controlled selective risk.
+      <span class="lead">Higher predictor capacity is the point:</span> a
+      stronger, GPU-trained <i>f</i> leaves only genuinely irreducible residual,
+      tightening <i>U</i> toward true unidentifiability &mdash; a frozen,
+      under-powered predictor over-attributes its own under-fitting to
+      &ldquo;biology.&rdquo; We chose this over Bayesian UQ (uncalibrated) and
+      naive variance abstention (tracks dropout, not biology) because the
+      aleatoric/epistemic split is not recoverable from a predictor&rsquo;s own
+      outputs; it needs the external clean reference and replicate Xenium
+      uniquely provides. The contribution is the oracle &mdash; the predictor
+      class is wrapped, not claimed.
+    </p>
+
+    <h2><span class="n">3.</span> Dataset</h2>
+    <p>
+      All data are public. The primary source is GEO <b>GSE243280</b> (Janesick
+      2023): paired breast <b>Xenium</b> (two serial technical replicates,
+      GSM7780153/4), <b>Visium</b>, and post-stain <b>H&amp;E</b>, on a 313-gene
+      panel. We extend to five co-registrable organ triads (breast, colon, lung,
+      liver/HCC, ovary), including a Xenium-5K panel for a scaling test &mdash;
+      on the order of hundreds of thousands of cells per section. Preprocessing:
+      niche-level spatial binning, serial-section rigid registration into a
+      shared frame, panel-gene intersection, and WSI tiling for backbone
+      fine-tuning.
+    </p>
+
+    <h2><span class="n">4.</span> Evaluation Metrics</h2>
+    <ul>
+      <li>
+        <b>Selective-risk&ndash;coverage curve</b> (selective risk vs. retained
+        fraction) &mdash; headline.
+      </li>
+      <li>
+        <b>Separation gap:</b> AUROC(deferral&harr;high-<i>U</i>) &minus;
+        AUROC(deferral&harr;dropout), &ge;&nbsp;0.10, holding under two
+        independent predictor architectures.
+      </li>
+      <li>
+        <b>Marginal coverage</b> within each Mondrian (gene&times;region) group,
+        within &plusmn;2% of nominal 1&minus;&alpha;.
+      </li>
+      <li>
+        <b>Noise-floor clearing</b> (genes with reproducible signal above the
+        replicate floor);
+        <b>retained-fraction &times; utility</b> &ge;&nbsp;15%;
+        <b>cross-panel scaling gap</b> (v1&nbsp;&rarr;&nbsp;Xenium-5K);
+        trained-<i>f</i> vs. frozen-baseline tightening of <i>U</i>.
+      </li>
+    </ul>
+
+    <h2><span class="n">5.</span> Compute Requirements</h2>
+    <p>
+      <b>GPU-intensive (multi-GPU HPC cluster, SLURM).</b> Two stages: (1)
+      <b>fine-tune the ungated backbone + train the dual-head predictor</b> on
+      WSI tiles, with a <b>deep ensemble across architectures</b> for the
+      epistemic term &mdash; on the order of tens of GPU-hours across five
+      organs, plus the throughput-bound one-time tiling + embedding-extraction
+      pass (Xenium-5K is the largest); (2) lightweight post-hoc conformal on
+      CPU. Mixed precision, gradient checkpointing, and embedding caches keep
+      each backbone within one A100/H100; ensembling and the organ panel
+      distribute across nodes via <code>torchrun</code>/DDP and array jobs. Fits
+      the 192&nbsp;GB budget. Dependencies: PyTorch (DDP), <code>timm</code>,
+      scanpy/anndata, MAPIE/crepes.
+    </p>
+
+    <h2><span class="n">6.</span> Expected Deliverables</h2>
+    <ul>
+      <li>
+        <b>Trained HYBRID dual-head oracle</b> + a fine-tuned
+        <b>ungated</b> backbone (no gated-model dependency), with the frozen
+        post-hoc oracle as a reproducible fallback baseline.
+      </li>
+      <li>
+        A reusable <b>benchmark</b> for biological-vs-technical separation on
+        H&amp;E&rarr;ST, released with the code.
+      </li>
+      <li>
+        Selective-risk&ndash;coverage results across the organ panel + the
+        panel-scaling ablation; SLURM/DDP training pipeline.
+      </li>
+      <li>
+        A short paper targeting <b>WACV&nbsp;2026</b>, pre-registered and fully
+        reproducible (per-run git SHA + config hash).
+      </li>
+    </ul>
+
+    <h2><span class="n">7.</span> Risk &amp; Mitigation</h2>
+    <ul>
+      <li>
+        <b>Signal-vs-noise floor.</b> Addressed by a <b>solved pre-flight</b>: a
+        cheap, no-training control on the real breast data already shows the
+        technical-replicate noise floor clears at niche resolution, with
+        biologically coherent markers (ESR1, keratins, SFRP1) leading. The
+        staged design gates all downstream work behind this control.
+      </li>
+      <li>
+        <b>Training stability of the dual head.</b> Staged with a
+        <b>guaranteed fallback</b> &mdash; the frozen post-hoc oracle is a
+        complete, always-available result, and the trained HYBRID is an upgrade
+        layered on top, so a shippable deliverable always exists. Variance-head
+        training uses &beta;-NLL and gradient surgery for stability.
+      </li>
+      <li>
+        <b>Serial-section registration.</b> Handled at niche (not single-cell)
+        resolution, using 10x-provided H&amp;E&harr;Xenium homographies plus a
+        built-in perturbation-sensitivity check; residual error stays in the
+        conservative, signal-shrinking direction.
+      </li>
+      <li>
+        <b>Reproducibility &amp; engineering.</b> Version-controlled,
+        test-gated, and already passed an independent multi-model code review
+        &mdash; engineering risk to the timeline is low.
+      </li>
+    </ul>
+
+    <footer>
+      Public data (GEO GSE243280). Compute: multi-GPU HPC cluster. Code &amp;
+      pre-registration: github.com/aayanAW/unidentifiability-oracle-he-st
+    </footer>
+  </body>
+</html>

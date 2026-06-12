@@ -18,10 +18,12 @@ MODE="${2:-noise}"
 BASE="https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM7780nnn"
 PY="${PYTHON:-python3}"
 
-declare -A GSM=( [rep1]=GSM7780153 [rep2]=GSM7780154 )
-declare -A TAG=( [rep1]=Rep1 [rep2]=Rep2 )
+# NB: no associative arrays (bash 3.2, the macOS default, lacks `declare -A`) -- audit SB2.
+gsm_of() { case "$1" in rep1) echo GSM7780153;; rep2) echo GSM7780154;; esac; }
+tag_of() { case "$1" in rep1) echo Rep1;; rep2) echo Rep2;; esac; }
 
-free_gb() { df -g "$OUT" | awk 'NR==2{print $4}'; }
+# portable free-GB (df -g is macOS-only): POSIX `df -Pk` gives 1024-byte blocks on macOS AND Linux.
+free_gb() { df -Pk "$OUT" | awk 'NR==2{print int($4/1024/1024)}'; }
 
 fetch() {  # fetch <url> <out_path>  (resumable)
   echo "  -> $(basename "$2")"
@@ -32,7 +34,7 @@ mkdir -p "$OUT"
 echo "free disk on $OUT: $(free_gb) GB"
 
 for rep in rep1 rep2; do
-  g="${GSM[$rep]}"; tag="${TAG[$rep]}"
+  g="$(gsm_of "$rep")"; tag="$(tag_of "$rep")"
   dir="$OUT/$rep"; mkdir -p "$dir"
   suppl="$BASE/$g/suppl"
   prefix="${g}_Xenium_FFPE_Human_Breast_Cancer_${tag}"
