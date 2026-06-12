@@ -24,7 +24,9 @@ GATED_ENCODERS = {
     "uni2": "MahmoodLab/UNI2-h",
     "virchow2": "paige-ai/Virchow2",
 }
-DEFAULT_FALLBACK = "dinov2_vits14"  # ungated, via timm
+DEFAULT_FALLBACK = (
+    "vit_small_patch14_dinov2.lvd142m"  # ungated DINOv2-S, the correct timm model name
+)
 
 
 @dataclass(frozen=True)
@@ -119,7 +121,14 @@ def _embed_fallback(
         import timm
         import torch
 
-        model = timm.create_model(encoder, pretrained=True, num_classes=0)
+        # dynamic_img_size lets ViT/DINOv2 interpolate position embeddings to the patch size we feed
+        # (DINOv2-lvd142m natively expects 518px); fall back to a plain create_model for non-ViT names.
+        try:
+            model = timm.create_model(
+                encoder, pretrained=True, num_classes=0, dynamic_img_size=True
+            )
+        except TypeError:
+            model = timm.create_model(encoder, pretrained=True, num_classes=0)
         model.eval()
         return _forward_timm(model, patches, torch), encoder, False
     except Exception as e:
