@@ -4,7 +4,7 @@ Single entry point for resuming in a fresh session. Read this first, then `decis
 
 ## ⟶ RESUME HERE (rollout 14, 2026-06-12) — build the trainable HYBRID
 
-Branch `feat/audit-fixes-rollout10` (PR #1 open to `main`, not merged). Public repo `aayanAW/unidentifiability-oracle-he-st`. State since the original handoff below:
+**`main` is current** — PR #1 (rollouts 8–14) merged at `2f50a08`. Public repo `aayanAW/unidentifiability-oracle-he-st`. Start the next session with `git checkout main && git checkout -b feat/hybrid-build`. State since the original handoff below:
 
 - **Cross-model audit done** (rollout 9, `audit_report.md`): Claude + Codex gpt-5.5. 5 confirmed criticals.
 - **Audit fixes done** (rollout 10): nonlinear RF substrate + failable gate w/ negative control, σ²_reg explicit, 2× noise-floor, spatial-block CV, KNN f′, bash-3.2 fetch, adaptive `grid_weights`, zip hardening. Gate green, ruff clean.
@@ -20,6 +20,10 @@ Branch `feat/audit-fixes-rollout10` (PR #1 open to `main`, not merged). Public r
 3. `src/train.py` — AMP, checkpointing, `torchrun`/DDP-ready, deep-ensemble; SLURM `sbatch`. Smoke-test on CPU/MPS (tiny), full run on cluster.
 4. Wire trained `f` as the `run_oracle` substrate; recompute U vs the frozen baseline (does training tighten it?).
 5. Compute the **selective-risk-coverage curve** (the real utility metric) — the headline result.
+
+**Push to GitHub as you write** — commit + push per logical unit (registration port, predictor, train script, gate update), not one big end-commit. Always public. Append a rollout-N entry to `decision-ledger.jsonl` per decision.
+
+**Cluster boundary:** steps 1–4 above are CLUSTER-FREE on this Mac (incl. training the dual-head on FROZEN cached embeddings = first trained-oracle result). Cluster (SLURM/DDP — NOT Modal) is ONLY for the later end-to-end backbone fine-tune + scaling to 5 organs + Xenium-5K.
 
 - Deps installed this session: `tifffile`, `timm`, `zarr<3`. Awaiting cluster access (user runs on cluster, not Modal).
 
