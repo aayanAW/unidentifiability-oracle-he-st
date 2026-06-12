@@ -2,6 +2,29 @@
 
 Single entry point for resuming in a fresh session. Read this first, then `decision-ledger.jsonl`.
 
+## ⟶ RESUME HERE (rollout 14, 2026-06-12) — build the trainable HYBRID
+
+Branch `feat/audit-fixes-rollout10` (PR #1 open to `main`, not merged). Public repo `aayanAW/unidentifiability-oracle-he-st`. State since the original handoff below:
+
+- **Cross-model audit done** (rollout 9, `audit_report.md`): Claude + Codex gpt-5.5. 5 confirmed criticals.
+- **Audit fixes done** (rollout 10): nonlinear RF substrate + failable gate w/ negative control, σ²_reg explicit, 2× noise-floor, spatial-block CV, KNN f′, bash-3.2 fetch, adaptive `grid_weights`, zip hardening. Gate green, ruff clean.
+- **Real data downloaded** (public GEO): breast Xenium Rep1/Rep2 matrices + H&E (1.4 GB ea) + homography. `data/` (gitignored). Disk ~12 GB free — **other 4 organs NOT downloaded (won't fit; not needed yet)**.
+- **Real noise floor** (rollout 11): K4 clears at **≥300 µm niches** (18.5% of 313 genes), dominates <250 µm. Resolution-constrained.
+- **Exploratory real U** (rollout 14, frozen DINOv2-S, EXPLORATORY not confirmatory): after the **SB4 registration fix** (`Hinv @ Xenium-px`), morph→ST predicts **58% of genes** (R² max 0.38, median +0.073), biologically coherent, U spatially structured. **Vacuity risk de-risked. GREEN.** Run: `python3 experiments/exploratory_u_breast.py data --bin-um 300 --encoder vit_small_patch14_dinov2.lvd142m`.
+- **Direction (rollout 12):** move to a **GPU-trained HYBRID** `f` on an **HPC cluster (SLURM/DDP — NOT Modal)**; fine-tune an **ungated** backbone (removes the UNI blocker). Not a novelty pivot. Proposal (`proposal.pdf`) reflects it.
+
+**Next actions (Tier-2 HYBRID build — cluster-independent to write + smoke-test; full run on cluster):**
+
+1. Port the SB4 registration fix (`experiments/exploratory_u_breast.py:_patches_lazy`) into `src/embeddings.py` + `src/loaders.py` (real pipeline).
+2. `src/predictor.py` — trainable `f`: ungated backbone (`vit_small_patch14_dinov2.lvd142m` or CTransPath) + H&E→ST head + dual variance head (β-NLL).
+3. `src/train.py` — AMP, checkpointing, `torchrun`/DDP-ready, deep-ensemble; SLURM `sbatch`. Smoke-test on CPU/MPS (tiny), full run on cluster.
+4. Wire trained `f` as the `run_oracle` substrate; recompute U vs the frozen baseline (does training tighten it?).
+5. Compute the **selective-risk-coverage curve** (the real utility metric) — the headline result.
+
+- Deps installed this session: `tifffile`, `timm`, `zarr<3`. Awaiting cluster access (user runs on cluster, not Modal).
+
+---
+
 ## How to resume (do this)
 
 1. Open Claude Code in this directory: `/Users/aayanalwani/Computer Vision`.
