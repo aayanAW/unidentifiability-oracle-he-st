@@ -177,54 +177,82 @@ def _extract_patches(
     patch_px: int,
     um_per_px: float,
 ) -> np.ndarray:
-    """Return (n_bins, patch_px, patch_px, 3) uint8 patches centered on each niche."""
-    img = _read_he(he_path)
-    h, w = img.shape[:2]
+    """Return (n_bins, patch_px, patch_px, 3) uint8 patches centered on each niche.
+
+    Memory-safe: the breast Post-Xenium H&E is ~1.3 GB; we map each niche to its H&E pixel (SB4 inverse
+    homography) and read only the patch_px window via a lazy zarr store, never the whole image into RAM.
+    """
+    he_path = _ensure_gunzipped(Path(he_path))
+    centers_px = _um_to_px(np.asarray(centers_um, dtype=float), H, um_per_px)
+    patches, _in_bounds = _read_windows_lazy(he_path, centers_px, patch_px)
+    return patches
+
+
+def _ensure_gunzipped(path: Path) -> Path:
+    """A .gz OME-TIFF cannot be opened as a lazy zarr store; gunzip it once to a sibling and reuse it."""
+    if path.suffix != ".gz":
+        return path
+    out = path.with_suffix("")  # drop the trailing .gz
+    if not out.exists():
+        import gzip
+        import shutil
+
+        with gzip.open(path, "rb") as src, open(out, "wb") as dst:
+            shutil.copyfileobj(src, dst, length=1 << 22)
+    return out
+
+
+def _read_windows_lazy(
+    he_path: str | Path, centers_px: np.ndarray, patch_px: int
+) -> tuple[np.ndarray, int]:
+    """Read patch_px windows at the given H&E pixel centers via a lazy zarr store (audit SB4 port).
+
+    Returns ((n, patch_px, patch_px, 3) uint8 patches, n_in_bounds). Out-of-bounds centers stay zero-padded.
+    """
+    import tifffile
+    import zarr
+
+    store = tifffile.imread(str(he_path), aszarr=True)
+    z = zarr.open(store, mode="r")
+    arr = (
+        z[0] if isinstance(z, zarr.hierarchy.Group) else z
+    )  # pyramidal series -> level 0
+    h, w = int(arr.shape[0]), int(arr.shape[1])
     half = patch_px // 2
-    centers_px = _um_to_px(centers_um, H, um_per_px)
-    out = np.zeros((len(centers_um), patch_px, patch_px, 3), np.uint8)
+    out = np.zeros((len(centers_px), patch_px, patch_px, 3), np.uint8)
+    in_bounds = 0
     for k, (cx, cy) in enumerate(centers_px):
         x0, y0 = int(round(cx)) - half, int(round(cy)) - half
         xs, ys = max(0, x0), max(0, y0)
         xe, ye = min(w, x0 + patch_px), min(h, y0 + patch_px)
         if xe <= xs or ye <= ys:
             continue
-        out[k, ys - y0 : ye - y0, xs - x0 : xe - x0] = img[ys:ye, xs:xe, :3]
-    return out
-
-
-def _read_he(path: str | Path) -> np.ndarray:
-    """Read an (optionally .gz) OME-TIFF / TIFF H&E into an (H,W,3) uint8 array."""
-    path = Path(path)
-    if path.suffix == ".gz":
-        import gzip
-        import tifffile
-
-        with gzip.open(path, "rb") as fh:
-            import io as _io
-
-            arr = tifffile.imread(_io.BytesIO(fh.read()))
-    else:
-        import tifffile
-
-        arr = tifffile.imread(str(path))
-    arr = np.asarray(arr)
-    if arr.ndim == 2:
-        arr = np.stack([arr] * 3, -1)
-    if arr.shape[0] in (3, 4) and arr.ndim == 3:  # channels-first
-        arr = np.moveaxis(arr, 0, -1)
-    if arr.dtype != np.uint8:
-        arr = (255 * (arr / (arr.max() + 1e-8))).astype(np.uint8)
-    return arr[..., :3]
+        tile = np.asarray(arr[ys:ye, xs:xe])
+        if tile.ndim == 2:  # grayscale -> stack to 3 channels
+            tile = np.stack([tile] * 3, axis=-1)
+        if tile.dtype != np.uint8:
+            tile = (255 * (tile / (tile.max() + 1e-8))).astype(np.uint8)
+        out[k, ys - y0 : ye - y0, xs - x0 : xe - x0] = tile[..., :3]
+        in_bounds += 1
+    return out, in_bounds
 
 
 def _um_to_px(
     centers_um: np.ndarray, H: np.ndarray | None, um_per_px: float
 ) -> np.ndarray:
+    """Map niche centers (microns) to H&E pixels.
+
+    The 10x Post-Xenium homography H maps H&E pixels -> Xenium pixels. To place a patch at a Xenium niche
+    we need the inverse, applied to the niche expressed in XENIUM PIXELS (microns / um_per_px). Applying
+    the forward H to microns (the pre-SB4 bug) sent ~20% of breast niches out of bounds and depressed
+    morph->ST R^2; the inverse map lands 399/399 in-bounds (audit SB4 fix, rollout 14).
+    """
+    centers_um = np.asarray(centers_um, dtype=float)
     if H is None:
         return centers_um / um_per_px
-    pts = np.hstack([centers_um, np.ones((len(centers_um), 1))])
-    proj = (H @ pts.T).T
+    xen_px = centers_um / um_per_px
+    pts = np.hstack([xen_px, np.ones((len(xen_px), 1))])
+    proj = (np.linalg.inv(H) @ pts.T).T
     return proj[:, :2] / proj[:, 2:3]
 
 
