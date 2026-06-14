@@ -99,3 +99,52 @@ def per_group_coverage(
     groups = np.asarray(groups)
     covered = scores <= q
     return {g: float(covered[groups == g].mean()) for g in np.unique(groups)}
+
+
+def selective_conformal_sweep(
+    U: np.ndarray,
+    abs_resid: np.ndarray,
+    alpha: float = 0.1,
+    grid: int = 10,
+    cal_frac: float = 0.5,
+    seed: int = 0,
+    sigma: np.ndarray | None = None,
+) -> np.ndarray:
+    """Coverage-guaranteed selective prediction = the oracle's deferral + conformal coverage, assembled.
+
+    Abstain on the highest-U genes (keep the lowest-U, most identifiable first), then split-conformal on the
+    retained (niche, gene) cells: calibrate the quantile on a held-out half of the NICHES and measure
+    coverage + interval width on the rest. As more high-U genes are abstained, the retained scores shrink so
+    the same 1-alpha guarantee buys TIGHTER intervals -- the headline utility of pairing U with conformal.
+
+    `abs_resid` (n_niche, n_gene) = |OOF residual| nonconformity scores; `sigma` (same shape, optional) =
+    the dual-head variance head for locally adaptive (|resid|/sigma) intervals. Returns (grid, 3):
+    [retained_gene_fraction, marginal_coverage, mean_interval_width].
+    """
+    U = np.asarray(U, dtype=float)
+    abs_resid = np.asarray(abs_resid, dtype=float)
+    n_spot, n_gene = abs_resid.shape
+    order = np.argsort(U)  # keep low-U (most identifiable) genes first
+
+    rng = np.random.default_rng(seed)
+    perm = rng.permutation(n_spot)
+    n_cal = max(1, int(cal_frac * n_spot))
+    cal_spots, test_spots = perm[:n_cal], perm[n_cal:]
+
+    rows = []
+    for frac in np.linspace(1.0, 0.1, grid):
+        k = max(1, int(round(frac * n_gene)))
+        keep = order[:k]
+        cal_sig = None if sigma is None else sigma[np.ix_(cal_spots, keep)]
+        test_sig = None if sigma is None else sigma[np.ix_(test_spots, keep)]
+        scores_cal = nonconformity_scores(
+            abs_resid[np.ix_(cal_spots, keep)], cal_sig
+        ).ravel()
+        scores_test = nonconformity_scores(
+            abs_resid[np.ix_(test_spots, keep)], test_sig
+        ).ravel()
+        q = conformal_quantile(scores_cal, alpha)
+        coverage = float((scores_test <= q).mean())
+        width = 2.0 * q if sigma is None else 2.0 * q * float(np.mean(test_sig))
+        rows.append((k / n_gene, coverage, width))
+    return np.array(rows)

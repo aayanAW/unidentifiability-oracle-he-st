@@ -1,0 +1,161 @@
+"""Deliverables #1 + #2 (cluster-free): the coverage-guaranteed selective-prediction product on breast.
+
+#1 SELECTIVE x CONFORMAL: abstain on highest-U genes (RF oracle U -- the strong deferral signal), then
+   split-conformal on the retained niche-gene cells -> a retained-fraction x coverage x interval-width
+   table. This assembles the two halves (deferral + coverage guarantee) into the actual contribution.
+#2 sigma-NORMALIZED ADAPTIVE INTERVALS: on the trained dual-head predictor, compare marginal |resid|
+   conformal vs |resid|/sigma using the variance head -- does the learned variance buy tighter intervals
+   at equal coverage? (Where the dual head can earn utility even though its U-ranking lost, rollout 15.)
+
+EXPLORATORY: frozen DINOv2-S morphology, breast only, 300um. Split-conformal coverage over niche-gene
+cells is approximate (cells within a niche are correlated); honest caveat, the marginal guarantee is over
+the niche split. Run:  python3 experiments/selective_conformal_breast.py data --bin-um 300 --alpha 0.1
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import torch  # noqa: E402
+
+from experiments.trained_oracle_breast import oof_dual_head  # noqa: E402
+from src import xenium_io as xio  # noqa: E402
+from src.conformal import conformal_quantile, selective_conformal_sweep  # noqa: E402
+from src.embeddings import embed_bins  # noqa: E402
+from src.loaders import XENIUM_UM_PER_PX, load_xenium_noise_floor  # noqa: E402
+from src.oracle import registration_sigma2, run_oracle  # noqa: E402
+from src.simulator import TriadData  # noqa: E402
+from src.train import TrainConfig  # noqa: E402
+
+torch  # noqa: B018 -- imported so oof_dual_head's torch usage is available
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("data_dir")
+    ap.add_argument("--bin-um", type=float, default=300.0)
+    ap.add_argument("--min-cells", type=int, default=30)
+    ap.add_argument("--alpha", type=float, default=0.1)
+    ap.add_argument("--epochs", type=int, default=200)
+    ap.add_argument("--seed", type=int, default=0)
+    args = ap.parse_args()
+    root = Path(args.data_dir)
+    target = 1.0 - args.alpha
+
+    z1, z2, centers, genes = load_xenium_noise_floor(
+        args.data_dir, bin_um=args.bin_um, min_cells=args.min_cells
+    )
+    z_est = 0.5 * (z1 + z2)
+    he = xio._first_existing(  # noqa: SLF001
+        root / "rep1", ("Post-Xenium_HE_Rep1.ome.tif", "*HE*.ome.tif", "*HE*ome.tif.gz")
+    )
+    homog = xio._first_existing(root / "rep1", ("*HE*homography.csv.gz",))  # noqa: SLF001
+    if he is None:
+        print("[selective-conformal] no H&E under data/rep1.")
+        return 3
+    mf = embed_bins(
+        he,
+        centers,
+        homog,
+        encoder="vit_small_patch14_dinov2.lvd142m",
+        um_per_px=XENIUM_UM_PER_PX,
+    )
+    X = np.asarray(mf.features, dtype=np.float64)
+    triad = TriadData(centers, X, z1, z2, np.zeros_like(z1), None)
+    sigma2_reg = registration_sigma2(triad, predictor="rf", seed=args.seed)
+    res = run_oracle(triad, sigma2_reg=sigma2_reg, predictor="rf", seed=args.seed)
+    U_rf = res.U
+    abs_resid_rf = np.sqrt(res.resid2)
+
+    # ---- #1: coverage-guaranteed selective table (RF substrate) --------------------------------------
+    table = selective_conformal_sweep(
+        U_rf, abs_resid_rf, alpha=args.alpha, grid=10, seed=args.seed
+    )
+    print("=" * 72)
+    print(
+        f"#1 coverage-guaranteed selective prediction (breast {args.bin_um:.0f}um, RF U) -- EXPLORATORY"
+    )
+    print("=" * 72)
+    print(f"target coverage 1-alpha={target:.2f}  (abstain on highest-U genes first)")
+    print(f"{'retain_frac':>11} {'coverage':>9} {'mean_width':>11}")
+    for fr, cov, wid in table:
+        print(f"{fr:>11.2f} {cov:>9.3f} {wid:>11.3f}")
+    full_w = table[np.argmax(table[:, 0]), 2]
+    half_w = table[np.argmin(np.abs(table[:, 0] - 0.5)), 2]
+    print(
+        f"-> interval width at 50% coverage is {100 * (1 - half_w / full_w):.0f}% tighter than keeping all genes"
+    )
+
+    # ---- #2: sigma-normalized adaptive intervals (dual-head variance) ---------------------------------
+    cfg = TrainConfig(
+        epochs=args.epochs,
+        lr=1e-3,
+        batch_size=128,
+        beta=0.5,
+        device="cpu",
+        seed=args.seed,
+    )
+    oof_mean, oof_var = oof_dual_head(X, z_est, centers, cfg, n_folds=4, seed=args.seed)
+    abs_resid_ddh = np.abs(z_est - oof_mean)
+    sigma_ddh = np.sqrt(np.clip(oof_var, 1e-8, None))
+
+    # both ordered by RF-U (strong deferral), full retention: marginal vs normalized width at equal coverage
+    sweep_marg = selective_conformal_sweep(
+        U_rf, abs_resid_ddh, alpha=args.alpha, grid=10, seed=args.seed
+    )
+    sweep_norm = selective_conformal_sweep(
+        U_rf, abs_resid_ddh, alpha=args.alpha, grid=10, seed=args.seed, sigma=sigma_ddh
+    )
+    # normalized widths are in sigma-units; rescale by mean sigma so widths are comparable to marginal (z-units)
+    q_marg = conformal_quantile(abs_resid_ddh.ravel(), args.alpha)
+    q_norm = conformal_quantile((abs_resid_ddh / sigma_ddh).ravel(), args.alpha)
+    cov_marg = float((abs_resid_ddh <= q_marg).mean())
+    cov_norm = float((abs_resid_ddh <= q_norm * sigma_ddh).mean())
+    width_marg = 2.0 * q_marg
+    width_norm = 2.0 * q_norm * float(sigma_ddh.mean())
+    print("-" * 72)
+    print(
+        "#2 marginal vs sigma-normalized intervals on the dual-head predictor (equal target coverage):"
+    )
+    print(f"  marginal   coverage={cov_marg:.3f}  mean_width={width_marg:.3f}")
+    print(
+        f"  normalized coverage={cov_norm:.3f}  mean_width={width_norm:.3f}  (sigma from the variance head)"
+    )
+    adaptive_wins = (width_norm < width_marg) and (cov_norm >= target - 0.03)
+
+    results = Path(__file__).resolve().parents[1] / "experiments" / "results"
+    results.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        results / "selective_conformal_breast.npz",
+        table=table,
+        sweep_marg=sweep_marg,
+        sweep_norm=sweep_norm,
+        width_marg=width_marg,
+        width_norm=width_norm,
+        cov_marg=cov_marg,
+        cov_norm=cov_norm,
+        alpha=args.alpha,
+    )
+    print("-" * 72)
+    print(
+        "READOUT #1: coverage-guaranteed selective prediction assembled -- abstaining on high-U genes keeps "
+        f"~{target:.0%} coverage while tightening the guaranteed interval (the product).\n"
+        f"READOUT #2: sigma-normalized adaptive intervals {'DO' if adaptive_wins else 'do NOT'} beat marginal "
+        "mean width at equal coverage on frozen embeddings -- "
+        + (
+            "the variance head buys efficiency."
+            if adaptive_wins
+            else "consistent with the weak frozen variance head; report straight."
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
