@@ -112,10 +112,43 @@ def test_selective_conformal_sweep_keeps_coverage_and_tightens_width():
     )
 
 
+def test_selective_conformal_sweep_sigma_path():
+    """The locally-adaptive (|resid|/sigma) path must keep coverage + tighten width as we abstain."""
+    rng = np.random.default_rng(7)
+    n_spot, n_gene = 200, 60
+    difficulty = np.linspace(0.2, 3.0, n_gene)
+    U = difficulty + 0.05 * rng.standard_normal(n_gene)
+    abs_resid = np.abs(rng.standard_normal((n_spot, n_gene)) * difficulty[None, :])
+    sigma = np.clip(
+        rng.random((n_spot, n_gene)) * difficulty[None, :] + 0.1, 0.05, None
+    )
+
+    table = selective_conformal_sweep(
+        U, abs_resid, alpha=0.1, grid=6, seed=0, sigma=sigma
+    )
+    frac, cov, width = table[:, 0], table[:, 1], table[:, 2]
+    assert table.shape == (6, 3)
+    assert np.all((cov >= 0.84) & (cov <= 0.95)), f"adaptive coverage off: {cov}"
+    assert np.all(width > 0)
+    assert width[np.argmin(frac)] < width[np.argmax(frac)], (
+        "adaptive abstention must tighten width"
+    )
+
+
+def test_selective_conformal_sweep_raises_on_too_few_niches():
+    try:
+        selective_conformal_sweep(np.array([0.1]), np.zeros((1, 5)), alpha=0.1)
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError when no test niches remain")
+
+
 if __name__ == "__main__":
     test_quantile_infinite_when_calibration_too_small_for_level()
     test_split_conformal_marginal_coverage()
     test_mondrian_fixes_spatial_undercoverage()
     test_empirical_coverage_and_per_group()
     test_selective_conformal_sweep_keeps_coverage_and_tightens_width()
+    test_selective_conformal_sweep_sigma_path()
+    test_selective_conformal_sweep_raises_on_too_few_niches()
     print("ALL conformal TESTS PASS")

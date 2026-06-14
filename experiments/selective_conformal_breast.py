@@ -89,7 +89,7 @@ def main() -> int:
     full_w = table[np.argmax(table[:, 0]), 2]
     half_w = table[np.argmin(np.abs(table[:, 0] - 0.5)), 2]
     print(
-        f"-> interval width at 50% coverage is {100 * (1 - half_w / full_w):.0f}% tighter than keeping all genes"
+        f"-> interval width at 50% gene retention is {100 * (1 - half_w / full_w):.0f}% tighter than keeping all genes"
     )
 
     # ---- #2: sigma-normalized adaptive intervals (dual-head variance) ---------------------------------
@@ -112,13 +112,21 @@ def main() -> int:
     sweep_norm = selective_conformal_sweep(
         U_rf, abs_resid_ddh, alpha=args.alpha, grid=10, seed=args.seed, sigma=sigma_ddh
     )
-    # normalized widths are in sigma-units; rescale by mean sigma so widths are comparable to marginal (z-units)
-    q_marg = conformal_quantile(abs_resid_ddh.ravel(), args.alpha)
-    q_norm = conformal_quantile((abs_resid_ddh / sigma_ddh).ravel(), args.alpha)
-    cov_marg = float((abs_resid_ddh <= q_marg).mean())
-    cov_norm = float((abs_resid_ddh <= q_norm * sigma_ddh).mean())
+    # HELD-OUT split (review fix): calibrate q on cal niches, measure coverage+width on test niches -- NOT
+    # on the calibration data itself (self-coverage would read ~1-alpha by construction and tell us nothing).
+    rng2 = np.random.default_rng(args.seed + 99)
+    perm2 = rng2.permutation(len(abs_resid_ddh))
+    n_cal2 = max(1, len(perm2) // 2)
+    cal2, test2 = perm2[:n_cal2], perm2[n_cal2:]
+    norm_resid = abs_resid_ddh / sigma_ddh  # dimensionless score for the adaptive path
+    q_marg = conformal_quantile(abs_resid_ddh[cal2].ravel(), args.alpha)
+    q_norm = conformal_quantile(norm_resid[cal2].ravel(), args.alpha)
+    cov_marg = float((abs_resid_ddh[test2] <= q_marg).mean())
+    cov_norm = float(
+        (norm_resid[test2] <= q_norm).mean()
+    )  # dimensionless: score <= quantile
     width_marg = 2.0 * q_marg
-    width_norm = 2.0 * q_norm * float(sigma_ddh.mean())
+    width_norm = 2.0 * q_norm * float(sigma_ddh[test2].mean())
     print("-" * 72)
     print(
         "#2 marginal vs sigma-normalized intervals on the dual-head predictor (equal target coverage):"
@@ -144,8 +152,10 @@ def main() -> int:
     )
     print("-" * 72)
     print(
-        "READOUT #1: coverage-guaranteed selective prediction assembled -- abstaining on high-U genes keeps "
-        f"~{target:.0%} coverage while tightening the guaranteed interval (the product).\n"
+        "READOUT #1: selective prediction with MARGINAL split-conformal coverage assembled -- abstaining on "
+        f"high-U genes holds ~{target:.0%} empirical coverage (marginal over the niche split; cell-level "
+        "coverage is approximate -- cells within a niche are correlated, so the formal guarantee is over the "
+        "~n_niche cal units) while tightening the interval (the product; conditional coverage is NOT claimed).\n"
         f"READOUT #2: sigma-normalized adaptive intervals {'DO' if adaptive_wins else 'do NOT'} beat marginal "
         "mean width at equal coverage on frozen embeddings -- "
         + (

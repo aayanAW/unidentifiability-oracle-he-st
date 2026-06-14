@@ -130,6 +130,11 @@ def selective_conformal_sweep(
     perm = rng.permutation(n_spot)
     n_cal = max(1, int(cal_frac * n_spot))
     cal_spots, test_spots = perm[:n_cal], perm[n_cal:]
+    if len(test_spots) == 0:
+        raise ValueError(
+            f"selective_conformal_sweep: n_spot={n_spot} with cal_frac={cal_frac} leaves no test "
+            "niches; need at least 2 niches."
+        )
 
     rows = []
     for frac in np.linspace(1.0, 0.1, grid):
