@@ -2,9 +2,32 @@
 
 Single entry point for resuming in a fresh session. Read this first, then `decision-ledger.jsonl`.
 
-## ⟶ RESUME HERE (rollout 16, 2026-06-13) — all cluster-free work DONE; only GPU/data-gated work left
+## ⟶ RESUME HERE (rollout 17, 2026-06-14) — cluster-free work COMPLETE; only GPU/data-gated work left
 
-**Branch `feat/hybrid-build`** (10 commits, pushed to public `aayanAW/unidentifiability-oracle-he-st`; PR not yet opened). Off `main` @ `2f50a08`. Every cluster-free component is built + green; what remains needs the GPU cluster or more data.
+**Branch `feat/hybrid-build`** (PR #2 open, ~16 commits, public `aayanAW/unidentifiability-oracle-he-st`). Off `main` @ `2f50a08`. Every high-value cluster-free deliverable is built, cross-model validated, and green.
+
+**Rollout 17 (second cluster-free wave) added:**
+
+- **#1 — selective × conformal integration (THE PRODUCT)** `src/conformal.py:selective_conformal_sweep` + `experiments/selective_conformal_breast.py`: abstain on highest-U genes, then split-conformal on the retained niche-gene cells. Breast 300µm: coverage holds ~0.90 across retained fractions; interval width tightens (2.374→2.230 at 50% retention, ~6%). Real + valid; **marginal** (not conditional/cell-level) guarantee, honestly caveated.
+- **#2 — σ-normalized adaptive intervals (honest negative)**: the frozen dual-head variance head does NOT buy tighter intervals at equal held-out coverage (normalized 2.861 > marginal 2.514). Mis-allocates width; consistent with rollout-15.
+- **#4 — synthetic U-tightening proxy** `experiments/synthetic_u_proxy.py`: **SUPPORTS the cluster bet** on planted truth — the trained dual head tightens U on identifiable genes ~6× (U(A) 0.522→0.083), separation U(C)/U(A) 2.14→17.36. Necessary-not-sufficient → the frozen-breast failure is a data/capacity limit, not a method flaw. Synthetic ≠ real.
+- **#3 — TISSUE baseline: SKIPPED honestly** (more meaningful against a confirmatory result than frozen-exploratory breast).
+- **Cross-model review**: 2 Claude reviewers converged on a self-coverage HIGH bug (fixed → proper held-out split); **Codex (GPT) confirmed the fix sound, no remaining findings**.
+
+**What remains (GPU- or data-gated ONLY):**
+
+1. **End-to-end backbone fine-tune** (GPU): `BACKBONE=vit_small_patch14_dinov2.lvd142m DATA=data/cache/patches_breast.npz sbatch scripts/train_dualhead.sbatch`. The open bet — does jointly-trained `f` lift DDH-U above RF + make σ-normalized intervals win + clear K2? (#4 says the mechanism works when signal is learnable.)
+2. **Deep ensemble across architectures** (`fit_ensemble` built).
+3. **5 organs + Xenium-5K** (GPU + data: liver/HCC/ovary have no Xenium replicate; disk tight).
+4. **TISSUE baseline** (post-cluster comparison).
+
+There is **no remaining cluster-free build work**. Next session resumes on the cluster.
+
+---
+
+### Prior: rollout 16 (cluster-free completion) — context
+
+Every cluster-free component is built + green; what remains needs the GPU cluster or more data.
 
 **Rollout 16 (cluster-free completion) added:**
 

@@ -81,9 +81,41 @@ def _conformal_figure() -> str | None:
     return str(out)
 
 
+def _selective_conformal_figure() -> str | None:
+    f = RESULTS / "selective_conformal_breast.npz"
+    if not f.exists():
+        return None
+    d = np.load(f, allow_pickle=True)
+    t = d["table"]  # [retained_fraction, coverage, mean_width]
+    target = 1.0 - float(d["alpha"])
+    fig, ax1 = plt.subplots(figsize=(5.2, 4.0))
+    ax1.plot(t[:, 0], t[:, 1], "C0-o", lw=2, label="coverage")
+    ax1.axhline(target, color="C0", ls=":", lw=1)
+    ax1.set_xlabel("retained gene fraction (abstain on highest-U first)")
+    ax1.set_ylabel("marginal coverage", color="C0")
+    ax1.set_ylim(target - 0.05, 1.0)
+    ax2 = ax1.twinx()
+    ax2.plot(t[:, 0], t[:, 2], "C3-s", lw=2, label="interval width")
+    ax2.set_ylabel("mean interval width", color="C3")
+    ax1.set_title("Coverage-guaranteed selective prediction — breast (exploratory)")
+    fig.tight_layout()
+    out = FIGS / "fig_selective_conformal.png"
+    fig.savefig(out, dpi=160)
+    plt.close(fig)
+    return str(out)
+
+
 def main() -> int:
     FIGS.mkdir(parents=True, exist_ok=True)
-    made = [p for p in (_selective_risk_figure(), _conformal_figure()) if p]
+    made = [
+        p
+        for p in (
+            _selective_risk_figure(),
+            _conformal_figure(),
+            _selective_conformal_figure(),
+        )
+        if p
+    ]
     if not made:
         print("[figures] no result .npz found -- run the experiments first.")
         return 1
