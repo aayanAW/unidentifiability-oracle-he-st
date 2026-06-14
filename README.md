@@ -4,10 +4,14 @@ A **selective-risk (abstention) layer** for virtual spatial transcriptomics that
 unpredictability (morphology genuinely cannot determine a gene) from _technical_ dropout (measurement
 noise), using a cleaner Xenium reference as the truth check.
 
-> Scope honesty (audit rollout 9→10): the post-hoc **conformal coverage guarantee** is the planned
-> HYBRID stage — it is **not yet implemented** in this repo (no conformal/coverage machinery here yet), so
-> avoid calling the current layer "coverage-guaranteed". `U` is an **upper bound** on intrinsic
-> unidentifiability, conditional on the predictor's recoverable signal (`preregistration.md` §11-B).
+> Scope honesty (rollout 16): the post-hoc **conformal coverage layer** is now implemented
+> (`src/conformal.py`: split + spatial-Mondrian) and gives a **marginal** distribution-free coverage
+> guarantee — empirically valid + well-calibrated on real breast (0.902 at α=0.10). It does **not** give a
+> per-spot _conditional_ guarantee (impossible, Foygel-Barber 2021); naive coverage is spatially
+> heterogeneous (H1: worst block 0.839, miscoverage Moran's I p=0.005) and Mondrian only partially closes
+> it. `U` remains an **upper bound** on intrinsic unidentifiability conditional on the predictor's
+> recoverable signal (`preregistration.md` §11-B). All current results are **exploratory** (frozen ungated
+> DINOv2-S, breast only); the confirmatory end-to-end / UNI run is the GPU-cluster step.
 
 See the evidence chain and design docs:
 

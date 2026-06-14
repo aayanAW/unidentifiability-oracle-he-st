@@ -2,9 +2,30 @@
 
 Single entry point for resuming in a fresh session. Read this first, then `decision-ledger.jsonl`.
 
-## ⟶ RESUME HERE (rollout 15, 2026-06-12) — Tier-2 HYBRID built; cluster end-to-end is next
+## ⟶ RESUME HERE (rollout 16, 2026-06-13) — all cluster-free work DONE; only GPU/data-gated work left
 
-**Branch `feat/hybrid-build`** (6 commits, pushed to public `aayanAW/unidentifiability-oracle-he-st`; PR not yet opened). Off `main` @ `2f50a08`. The Tier-2 cluster-free HYBRID build is DONE; the first trained-oracle result is in.
+**Branch `feat/hybrid-build`** (10 commits, pushed to public `aayanAW/unidentifiability-oracle-he-st`; PR not yet opened). Off `main` @ `2f50a08`. Every cluster-free component is built + green; what remains needs the GPU cluster or more data.
+
+**Rollout 16 (cluster-free completion) added:**
+
+- **Conformal layer** (`src/conformal.py`, the missing Phase-3 PDC): split (marginal) + spatial-Mondrian (group-conditional) + σ-normalized scores. **First real H1 result** (`experiments/conformal_breast.py`): marginal coverage valid + well-calibrated (0.902/0.952/0.804), but naive coverage is spatially heterogeneous (worst block **0.839 < 0.90**, miscoverage **Moran's I=0.263, p=0.005**); spatial-Mondrian tightens it (spread 0.114→0.087, worst 0.839→0.854). H1 SUPPORTED.
+- **End-to-end de-risked**: ImageNet-normalization added inside the backbone path; full `--backbone` CLI smoke validated (DINOv2-S builds, normalizes, fits, checkpoints with `encoder_name`/`is_confirmatory`). `experiments/build_patches.py` → `data/cache/patches_breast.npz` (399×3×224×224) so the cluster run is one submit.
+- **Figures**: `experiments/make_figures.py` (selective-risk-coverage + H1 coverage).
+- **README honesty** updated (conformal now implemented; marginal-not-conditional).
+
+**What remains (GPU- or data-gated only):**
+
+1. **End-to-end backbone fine-tune** (GPU): `BACKBONE=vit_small_patch14_dinov2.lvd142m DATA=data/cache/patches_breast.npz sbatch scripts/train_dualhead.sbatch`. The open scientific bet — does a jointly-trained `f` lift DDH-U above the RF baseline + clear K2?
+2. **Deep ensemble across architectures** (epistemic term + independent-f′ arm; `fit_ensemble` built + tested). Planned cluster mechanism; a frozen 3-member run won't flip the DDH conclusion (floor-clipping, not seed variance).
+3. **5 organs + Xenium-5K** (GPU + data: liver/HCC/ovary have NO Xenium technical replicate; disk tight).
+4. **TISSUE baseline** comparison (can be added cluster-free later if wanted).
+5. **Open the PR** for `feat/hybrid-build`.
+
+---
+
+### Prior: rollout 15 (Tier-2 HYBRID build) — superseded header kept for context
+
+The Tier-2 cluster-free HYBRID build is DONE; the first trained-oracle result is in.
 
 **What landed this session (rollout 15):**
 
