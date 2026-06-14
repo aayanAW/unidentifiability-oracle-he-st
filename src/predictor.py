@@ -57,6 +57,7 @@ class DualHeadOracle(nn.Module):
         dropout: float = 0.1,
         min_logvar: float = -10.0,
         max_logvar: float = 6.0,
+        normalize_images: bool = True,
     ) -> None:
         super().__init__()
         if not trunk_dims:
@@ -64,6 +65,15 @@ class DualHeadOracle(nn.Module):
         self.backbone = backbone
         self.min_logvar = float(min_logvar)
         self.max_logvar = float(max_logvar)
+        # end-to-end mode feeds uint8-range [0,255] patches; the backbone expects ImageNet-normalized input,
+        # so normalize inside the module (buffers move with .to(device)). Matches embeddings._forward_timm.
+        self.normalize_images = bool(normalize_images)
+        self.register_buffer(
+            "_img_mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+        )
+        self.register_buffer(
+            "_img_std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        )
 
         dims = [in_dim, *trunk_dims]
         layers: list[nn.Module] = []
@@ -79,8 +89,13 @@ class DualHeadOracle(nn.Module):
         nn.init.zeros_(self.logvar_head.bias)
 
     def features(self, x: torch.Tensor) -> torch.Tensor:
-        """Route (N,3,H,W) image batches through the backbone; pass (N,d) embeddings straight through."""
+        """Route (N,3,H,W) image batches through the backbone; pass (N,d) embeddings straight through.
+
+        Image batches are expected in uint8 range [0,255] and are ImageNet-normalized before the backbone.
+        """
         if self.backbone is not None and x.dim() == 4:
+            if self.normalize_images:
+                x = (x / 255.0 - self._img_mean) / self._img_std
             return self.backbone(x)
         return x
 

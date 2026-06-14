@@ -46,6 +46,31 @@ def test_forward_image_mode_runs_through_backbone():
     assert mean.shape == (4, 3) and logvar.shape == (4, 3)
 
 
+def test_image_mode_imagenet_normalizes_before_backbone():
+    """uint8-range patches must be ImageNet-normalized before the backbone (end-to-end correctness)."""
+
+    class RecordBackbone(torch.nn.Module):
+        num_features = 8
+
+        def __init__(self):
+            super().__init__()
+            self.seen = None
+
+        def forward(self, x):
+            self.seen = x.detach().clone()
+            return x.mean(dim=(2, 3)).repeat(1, 8 // 3 + 1)[:, :8]
+
+    bb = RecordBackbone()
+    model = DualHeadOracle(n_genes=2, in_dim=8, backbone=bb)
+    white = torch.full((1, 3, 16, 16), 255.0)  # all-white patch in [0,255]
+    model(white)
+    # (255/255 - mean)/std per channel
+    expected = (1.0 - torch.tensor([0.485, 0.456, 0.406])) / torch.tensor(
+        [0.229, 0.224, 0.225]
+    )
+    assert torch.allclose(bb.seen[0, :, 0, 0], expected, atol=1e-5)
+
+
 def test_beta_nll_matches_closed_form_and_beta_zero_is_plain_nll():
     torch.manual_seed(1)
     mean = torch.randn(6, 3)
@@ -95,6 +120,7 @@ def test_dual_head_learns_linear_gaussian():
 if __name__ == "__main__":
     test_forward_embedding_mode_shapes_and_logvar_clamp()
     test_forward_image_mode_runs_through_backbone()
+    test_image_mode_imagenet_normalizes_before_backbone()
     test_beta_nll_matches_closed_form_and_beta_zero_is_plain_nll()
     test_dual_head_learns_linear_gaussian()
     print("ALL predictor TESTS PASS")
