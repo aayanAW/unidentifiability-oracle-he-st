@@ -80,7 +80,6 @@ def test_fit_dual_head_image_mode_with_backbone():
     rng = np.random.default_rng(0)
     n, g = 48, 3
     X = (rng.random((n, 3, 16, 16)) * 255).astype(np.float32)  # uint8-range patches
-    W = rng.standard_normal((12, g)).astype(np.float32)
     # target is a function of the patch mean so the backbone+head can learn it
     Y = (X.reshape(n, 3, -1).mean(-1) @ rng.standard_normal((3, g))).astype(np.float32)
     model = DualHeadOracle(
