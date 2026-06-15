@@ -5,7 +5,7 @@ guarantee is hard to keep. Two estimators:
 
   - split conformal (marginal): one global quantile of the calibration nonconformity scores. Gives
     distribution-free marginal coverage >= 1-alpha under exchangeability.
-  - spatial-Mondrian (group-conditional): a separate quantile per spatial block. Restores per-block
+  - spatial-Mondrian (group-conditional): a separate quantile per spatial block. PARTIALLY improves per-block
     coverage when spots are spatially autocorrelated and naive (pooled) conformal under-covers some
     regions -- the pre-registered H1 phenomenon (Foygel-Barber: exact conditional coverage is impossible,
     so we target group-conditional coverage over spatial Mondrian groups, not a per-spot guarantee).

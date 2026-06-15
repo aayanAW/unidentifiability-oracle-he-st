@@ -34,6 +34,18 @@ from src.oracle import registration_sigma2, run_oracle  # noqa: E402
 from src.simulator import TriadData  # noqa: E402
 
 
+def _git_sha() -> str:
+    import subprocess
+
+    try:
+        root = Path(__file__).resolve().parents[1]
+        return subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+        ).strip()[:10]
+    except Exception:
+        return "unknown"
+
+
 def _spatial_blocks(coords: np.ndarray, n_side: int) -> np.ndarray:
     """Assign each niche to one of n_side x n_side spatial blocks (Mondrian groups)."""
     mins = coords.min(0)
@@ -99,8 +111,16 @@ def main() -> int:
     cov_mond = per_group_coverage(test_s, q_test, test_g)
 
     marg = float((test_s <= q_naive).mean())
-    naive_worst = min(cov_naive.values())
-    mond_worst = min(cov_mond.values())
+    naive_worst_blk = min(cov_naive, key=cov_naive.get)
+    mond_worst_blk = min(cov_mond, key=cov_mond.get)
+    naive_worst = cov_naive[naive_worst_blk]
+    mond_worst = cov_mond[mond_worst_blk]
+    naive_worst_after_mond = cov_mond[
+        naive_worst_blk
+    ]  # what Mondrian did to the block naive failed on
+    mond_worst_before = cov_naive[
+        mond_worst_blk
+    ]  # the block Mondrian made worst -- did it regress?
 
     # spatial structure of NAIVE miscoverage: per-test-niche coverage, Moran's I
     cov_per_spot = (abs_resid[test_spots] <= q_naive).mean(1)
@@ -125,15 +145,21 @@ def main() -> int:
     print(
         f"  MONDRIAN worst-block={mond_worst:.3f}  mean={np.mean(list(cov_mond.values())):.3f}  spread={np.ptp(list(cov_mond.values())):.3f}"
     )
+    print(
+        f"  per-block: naive-worst block {naive_worst_blk} {naive_worst:.3f} -> {naive_worst_after_mond:.3f} "
+        f"under Mondrian ({naive_worst_after_mond - naive_worst:+.3f}); but block {mond_worst_blk} "
+        f"{mond_worst_before:.3f} -> {mond_worst:.3f} ({mond_worst - mond_worst_before:+.3f}, the new worst "
+        "-- Mondrian can REGRESS a block via small per-block calibration)"
+    )
     print(f"naive miscoverage spatial structure: Moran's I={mi:.3f} (p={mp:.3f})")
 
-    # coverage-vs-alpha validity curve
+    # coverage-vs-alpha validity curve (persisted -- audit K)
     print("validity (marginal coverage vs target across alpha):")
+    cov_by_alpha = {}
     for a in (0.05, 0.1, 0.2):
         q = conformal_quantile(cal_s, a)
-        print(
-            f"  alpha={a:.2f} target={1 - a:.2f}  coverage={float((test_s <= q).mean()):.3f}"
-        )
+        cov_by_alpha[a] = float((test_s <= q).mean())
+        print(f"  alpha={a:.2f} target={1 - a:.2f}  coverage={cov_by_alpha[a]:.3f}")
 
     results = Path(__file__).resolve().parents[1] / "experiments" / "results"
     results.mkdir(parents=True, exist_ok=True)
@@ -142,25 +168,36 @@ def main() -> int:
         cov_naive=np.array(list(cov_naive.values())),
         cov_mond=np.array(list(cov_mond.values())),
         marginal=marg,
+        cov_05=cov_by_alpha[0.05],
+        cov_10=cov_by_alpha[0.1],
+        cov_20=cov_by_alpha[0.2],
+        naive_worst=naive_worst,
+        mond_worst=mond_worst,
         morans_i=mi,
         morans_p=mp,
         alpha=args.alpha,
+        git_sha=np.array(_git_sha()),
+        seed=np.int64(args.seed),
     )
 
     print("-" * 70)
-    under = naive_worst < target - 0.03  # worst block under-covers beyond a 3pt margin
-    restored = mond_worst >= naive_worst - 1e-6 and mond_worst >= target - 0.05
-    if under and restored:
+    # H1's claim = spatial non-exchangeability is REAL: naive under-covers the worst block AND miscoverage is
+    # spatially structured. The Mondrian remediation is a SEPARATE, partial result -- never say "restores".
+    under = naive_worst < target - 0.03
+    spatial = mp < 0.05
+    if under and spatial:
+        gap0, gap1 = target - naive_worst, target - mond_worst
         print(
-            f"READOUT: H1 SUPPORTED -- naive conformal under-covers the worst spatial block "
-            f"({naive_worst:.3f} < {target:.2f}); spatial-Mondrian restores it ({mond_worst:.3f}). "
-            "Spatial non-exchangeability is real on breast niches and the group-conditional layer fixes it."
+            f"READOUT: H1 SUPPORTED (spatial non-exchangeability is real) -- naive split-conformal "
+            f"under-covers the worst block ({naive_worst:.3f} < {target:.2f}) and miscoverage is spatially "
+            f"structured (Moran's I={mi:.3f}, p={mp:.3f}). REMEDIATION is PARTIAL: spatial-Mondrian reduces "
+            f"the worst-block gap {gap0:.3f}->{gap1:.3f} (closes {100 * (1 - gap1 / gap0):.0f}% of it) but "
+            f"does NOT restore to {target:.2f} -- limited by ~{n_spot // (2 * args.n_side**2)} cal niches/block."
         )
         return 0
     print(
-        f"READOUT: H1 not clearly supported here -- naive worst-block={naive_worst:.3f}, "
-        f"Mondrian worst-block={mond_worst:.3f} vs target {target:.2f}. Report straight; "
-        "the marginal guarantee holds, the spatial gap is small at this binning/scale."
+        f"READOUT: H1 not clearly supported here -- naive worst-block={naive_worst:.3f}, miscoverage "
+        f"Moran p={mp:.3f}. Report straight; the marginal guarantee holds, the spatial gap is small here."
     )
     return 1
 
