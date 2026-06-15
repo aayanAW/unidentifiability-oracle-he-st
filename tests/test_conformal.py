@@ -93,22 +93,28 @@ def test_selective_conformal_sweep_keeps_coverage_and_tightens_width():
     on the retained set, while marginal coverage stays ~1-alpha at every retained fraction."""
     rng = np.random.default_rng(0)
     n_spot, n_gene = 200, 60
-    # per-gene difficulty: low-U genes have small residual scale, high-U genes large
-    difficulty = np.linspace(0.2, 3.0, n_gene)
+    # SHUFFLE difficulty so gene INDEX != difficulty (audit H): otherwise a flat/uninformative U argsorts to
+    # low-index=low-difficulty genes and "tightens" with no real signal. Decoupling forces U to be informative.
+    difficulty = rng.permutation(np.linspace(0.2, 3.0, n_gene))
     U = difficulty + 0.05 * rng.standard_normal(n_gene)  # U tracks difficulty (noisy)
     abs_resid = np.abs(rng.standard_normal((n_spot, n_gene)) * difficulty[None, :])
 
     table = selective_conformal_sweep(U, abs_resid, alpha=0.1, grid=8, seed=0)
     assert table.shape == (8, 3)  # [retained_fraction, coverage, mean_width]
     frac, cov, width = table[:, 0], table[:, 1], table[:, 2]
-
-    # coverage holds near target at every retained fraction (conformal validity on the retained set)
     assert np.all((cov >= 0.85) & (cov <= 0.95)), f"coverage off target: {cov}"
-    # keeping fewer (lower-U) genes gives strictly tighter mean intervals than keeping everything
-    keep_small = width[np.argmin(frac)]
-    keep_all = width[np.argmax(frac)]
-    assert keep_small < keep_all, (
-        f"abstention must tighten intervals: small={keep_small:.3f} all={keep_all:.3f}"
+    keep_small, keep_all = width[np.argmin(frac)], width[np.argmax(frac)]
+    assert keep_small < 0.9 * keep_all, (
+        f"informative U must clearly tighten: small={keep_small:.3f} all={keep_all:.3f}"
+    )
+
+    # NEGATIVE CONTROL: a flat (uninformative) U must NOT meaningfully tighten intervals
+    flat = selective_conformal_sweep(
+        np.ones(n_gene), abs_resid, alpha=0.1, grid=8, seed=0
+    )
+    fw_small, fw_all = flat[np.argmin(flat[:, 0]), 2], flat[np.argmax(flat[:, 0]), 2]
+    assert fw_small >= 0.9 * fw_all, (
+        f"flat U must not tighten intervals (got {fw_small:.3f} vs {fw_all:.3f})"
     )
 
 
