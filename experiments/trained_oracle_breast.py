@@ -233,6 +233,17 @@ def main() -> int:
     sp_rf_cross = spearmanr(
         U_rf, error_knn
     ).correlation  # INDEPENDENT: U_rf ranks the knn f' errors (A)
+    # null floor (review fix): RF and knn share the z_est target, so part of sp_rf_cross is shared
+    # prediction difficulty, not U detecting biology. A permuted-U_rf null gives the no-information floor.
+    _rng_null = np.random.default_rng(args.seed + 7)
+    sp_null = float(
+        np.median(
+            [
+                spearmanr(_rng_null.permutation(U_rf), error_knn).correlation
+                for _ in range(50)
+            ]
+        )
+    )
     sp_rawvar = spearmanr(rawvar_ddh, error_ddh).correlation
     ddh_degenerate = bool(
         np.ptp(U_ddh) < 1e-12
@@ -275,8 +286,9 @@ def main() -> int:
         "residuals as error_rf -- NOT an independent calibration]"
     )
     print(
-        f"Spearman(U_rf, error_knn)={sp_rf_cross:.3f}  [INDEPENDENT f' (knn) calibration -- the pre-registered "
-        "non-circular check, prereg 11-C]  DDH-rawvar(self)={:.3f}".format(sp_rawvar)
+        f"Spearman(U_rf, error_knn)={sp_rf_cross:.3f}  [INDEPENDENT f' (knn) calibration -- prereg 11-C; null "
+        f"floor (permuted U)={sp_null:.3f}. NOTE: RF+knn share the z_est target, so this partly reflects "
+        f"shared prediction difficulty, not only U.]  DDH-rawvar(self)={sp_rawvar:.3f}"
     )
     if ddh_degenerate:
         print(
@@ -284,9 +296,14 @@ def main() -> int:
             "Spearman, and DDH-U Moran's I are UNDEFINED (constant score). The honest statement is: the "
             "frozen variance head collapses U to zero; it is NOT a measured negative deferral."
         )
-    print(
-        f"DDH top-U spatial structure: Moran's I={ddh_struct['morans_i']:.3f} (p={ddh_struct['pvalue']:.3f})"
-    )
+    if ddh_degenerate:
+        print(
+            "DDH top-U spatial structure: UNDEFINED (U_ddh degenerate -- see note above)"
+        )
+    else:
+        print(
+            f"DDH top-U spatial structure: Moran's I={ddh_struct['morans_i']:.3f} (p={ddh_struct['pvalue']:.3f})"
+        )
     print("-" * 72)
     print("selective-risk-coverage efficiency (1=oracle deferral, 0=random):")
     print(
@@ -296,11 +313,12 @@ def main() -> int:
     print(
         f"  self-normalized   RF : eff={eff_rf['efficiency']:.3f}  AURC={eff_rf['aurc']:.4f} risk@50%={eff_rf['risk50']:.4f}"
     )
+    ddh_tag = "  [UNDEFINED -- U_ddh degenerate]" if ddh_degenerate else ""
     print(
-        f"  self-normalized   DDH: eff={eff_ddh['efficiency']:.3f}  AURC={eff_ddh['aurc']:.4f} risk@50%={eff_ddh['risk50']:.4f}"
+        f"  self-normalized   DDH: eff={eff_ddh['efficiency']:.3f}  AURC={eff_ddh['aurc']:.4f} risk@50%={eff_ddh['risk50']:.4f}{ddh_tag}"
     )
     print(
-        f"  HEAD-TO-HEAD (rank on DDH error): RF-U eff={eff_rankRF['efficiency']:.3f}  vs  DDH-U eff={eff_rankDDH['efficiency']:.3f}"
+        f"  HEAD-TO-HEAD (rank on DDH error): RF-U eff={eff_rankRF['efficiency']:.3f}  vs  DDH-U eff={eff_rankDDH['efficiency']:.3f}{ddh_tag}"
     )
     print(
         f"  DIAGNOSTIC: DDH RAW-variance (no floor subtraction) eff={eff_rawDDH['efficiency']:.3f}  "
@@ -336,6 +354,9 @@ def main() -> int:
         ),  # so R^2 = 1 - error/z_var is recomputable from the artifact (audit K)
         sp_rf_self=np.float64(sp_rf_self),
         sp_rf_cross=np.float64(sp_rf_cross),  # the independent f' calibration (audit A)
+        sp_null=np.float64(
+            sp_null
+        ),  # permuted-U null floor for the cross calibration (review fix)
         ddh_degenerate=np.bool_(ddh_degenerate),
         git_sha=np.array(
             _stamp(repo)

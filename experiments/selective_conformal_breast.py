@@ -138,8 +138,8 @@ def main() -> int:
     print(
         f"-> REAL utility (risk concentration) at 50% retention -- mean retained error: "
         f"U-ranking={err50_U:.3f}  random={err50_rand:.3f}  perfect-oracle={err50_oracle:.3f}  "
-        f"=> U gives {100 * (1 - err50_U / err50_rand):.1f}% lower error than random, "
-        f"{'matches' if abs(err50_U - err50_oracle) < 0.01 else 'vs'} perfect {err50_oracle:.3f}."
+        f"=> U gives {100 * (1 - err50_U / err50_rand):.1f}% lower error than random, and sits "
+        f"{100 * (err50_U / err50_oracle - 1):.1f}% above the perfect-oracle floor ({err50_oracle:.3f})."
     )
     print(
         f"-> coverage holds near {target:.2f} for retention >= 20% (min {table[table[:, 0] >= 0.2, 1].min():.3f}); "

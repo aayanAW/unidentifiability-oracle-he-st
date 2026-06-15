@@ -152,11 +152,13 @@ def main() -> int:
         b: float(naive_cov_per_niche[test_blocks == b].mean())
         for b in np.unique(test_blocks)
     }
-    niche_worst = min(niche_block_cov.values())
-    # Clopper-Pearson finite-sample CI on the worst block, using the NICHE count as the effective n (the
-    # conservative, exchangeability-correct sample size -- pooled cells overstate n).
-    n_naive_worst = int((test_blocks == naive_worst_blk).sum())
-    cp_lo, cp_hi = _clopper_pearson(round(naive_worst * n_naive_worst), n_naive_worst)
+    niche_worst_blk = min(niche_block_cov, key=niche_block_cov.get)
+    niche_worst = niche_block_cov[niche_worst_blk]
+    # Clopper-Pearson CI on the NICHE-level worst block, using the NICHE-level coverage rate AND the niche
+    # count -- both at the exchangeable unit (review fix: mixing a cell-level rate with a niche n was wrong
+    # and anti-conservative). This is the conservative interval the prereg-11-E claim needs.
+    n_niche_worst = int((test_blocks == niche_worst_blk).sum())
+    cp_lo, cp_hi = _clopper_pearson(round(niche_worst * n_niche_worst), n_niche_worst)
 
     # spatial structure of NAIVE miscoverage: per-test-niche coverage, Moran's I
     cov_per_spot = (abs_resid[test_spots] <= q_naive).mean(1)
@@ -189,7 +191,7 @@ def main() -> int:
     )
     print(
         f"  niche-level (exchangeable unit): marginal={niche_marg:.3f}  worst-block={niche_worst:.3f}  "
-        f"[naive worst-block 95% Clopper-Pearson over n={n_naive_worst} niches: ({cp_lo:.3f}, {cp_hi:.3f})]"
+        f"[niche-level worst-block 95% Clopper-Pearson over n={n_niche_worst} niches: ({cp_lo:.3f}, {cp_hi:.3f})]"
     )
     print(f"naive miscoverage spatial structure: Moran's I={mi:.3f} (p={mp:.3f})")
 

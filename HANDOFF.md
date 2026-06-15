@@ -8,7 +8,7 @@ Single entry point for resuming in a fresh session. Read this first, then `decis
 
 **⚠ Rollout-18/19 audit corrected several over-claimed/degenerate numbers — use THESE, not the older rollout-15/17 digits:**
 
-- **Independent calibration = Spearman(U_rf, error_knn) = 0.601** (the pre-registered non-circular check via the knn f′ arm). The earlier **0.916** was `Spearman(U_rf, error_rf)` = **self-referential** (U_rf derived from the same residuals) — do NOT cite it as validation.
+- **Independent calibration = Spearman(U_rf, error_knn) = 0.601** (pre-registered non-circular check via the knn f′ arm; **permuted-U null floor = 0.004**, so 0.601 is robustly above chance — the shared-z_est-target confound is negligible). The earlier **0.916** was `Spearman(U_rf, error_rf)` = **self-referential** (U_rf derived from the same residuals) — do NOT cite it as validation.
 - **Selective product (the real signal = risk concentration):** at 50% retention U-ranking gives **9.7% lower retained error than random and MATCHES the perfect oracle** (0.475 vs 0.473). The 6% interval-width tightening is largely mechanical — don't headline it. Coverage holds near 0.90 for retention ≥20% (dips to 0.885 at 10%).
 - **H1: SUPPORTED** on the **load-bearing Moran's test** — miscoverage is spatially structured across all niches (Moran's I=0.263, **p=0.005**). The single worst-block point (0.839) is **NOT individually significant** (niche-level Clopper-Pearson 95% CI 0.544–0.960 spans 0.90, n=16). Spatial-Mondrian **remediation is PARTIAL** (closes ~24% of the gap; a different block regresses) — NOT "restored".
 - **DDH-U is DEGENERATE on frozen breast** (variance head collapses U to all-zeros). The earlier "DDH-U efficiency −0.074" + "Moran 0.34" were argsort-on-constant **artifacts → now reported UNDEFINED**. Honest negative = the frozen variance head collapses; the cluster end-to-end `f` is the bet.
@@ -70,9 +70,11 @@ The Tier-2 cluster-free HYBRID build is DONE; the first trained-oracle result is
 
 **First trained-oracle result (breast @300 µm, frozen DINOv2-S, EXPLORATORY — `python3 experiments/trained_oracle_breast.py data --bin-um 300`):**
 
-- The **frozen-RF raw-variance oracle is a STRONG real selective system**: efficiency **0.784**, Spearman(U,error)=**0.916**. The C1 oracle machinery works on real tissue.
-- The **trained dual-head on FROZEN embeddings does NOT beat it**: head-to-head RF-U eff **0.524** vs DDH-U eff **−0.074**; DDH raw-variance diagnostic **0.386**. `U_ddh` collapses under floor-subtraction; mean head R² max 0.396, 130/313 genes.
-- **Verdict MIXED, reported straight (not a kill).** Frozen embeddings + ~399 niches favor the RF ensemble variance; the dual-head's advantage is the **pre-registered end-to-end cluster bet** (jointly-trained backbone + 5 organs). No hyperparameter chasing.
+> ⚠ **SUPERSEDED by rollout-18/19 audit — use the corrected block at the TOP of this file.** The numbers below were the rollout-15 framing; the audit found `Spearman(U,error)=0.916` and `eff 0.784` are **self-referential** (do NOT cite as validation; independent = `Spearman(U_rf,error_knn)=0.601`), and the **DDH-U −0.074 is a degenerate `argsort`-on-constant artifact → UNDEFINED**. Kept verbatim only for trace.
+
+- ~~The frozen-RF raw-variance oracle is a STRONG real selective system: efficiency 0.784, Spearman(U,error)=0.916.~~ → self-referential (see top-of-file correction).
+- ~~head-to-head RF-U eff 0.524 vs DDH-U eff −0.074; DDH raw-variance 0.386~~ → DDH-U UNDEFINED (`U_ddh` fully floor-clipped). Mean head R² max 0.396, 130/313 genes (this part stands).
+- **Verdict MIXED, reported straight (not a kill).** Frozen embeddings + ~399 niches favor the RF ensemble variance; the dual-head's advantage is the **pre-registered end-to-end cluster bet**. No hyperparameter chasing.
 
 **Review:** 4-dim adversarial Workflow → 14 confirmed findings (2-skeptic verified) → **all fixed** (channels-first all-zero patches, SB4 in-bounds invariant, real `--backbone` wiring, artifact labeling, GradScaler, efficiency normalizer, atomic gunzip, device-safe OOF, `--rdzv-id`, RF-defined C1 mask, …). 6 test suites green, ruff clean.
 

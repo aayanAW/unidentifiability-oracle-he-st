@@ -62,7 +62,8 @@ dual-head fine-tune on a SLURM cluster:
 pip install torch --index-url https://download.pytorch.org/whl/cu121   # pick your CUDA
 pip install -r requirements.txt
 
-# 2. training data -- NOT in git. Either transfer the pre-built patch tensor (37 MB):
+# 2. training data -- NOT in git (gitignored derived data). If you ALREADY built it locally
+#    (experiments/build_patches.py, which needs the full GSE243280 download), transfer the 37 MB tensor:
 rsync -avP data/cache/patches_breast.npz <cluster>:<repo>/data/cache/
 #    OR regenerate it on the cluster from the raw GSE243280 breast data:
 python3 experiments/build_patches.py data --bin-um 300      # needs data/rep1 + data/rep2

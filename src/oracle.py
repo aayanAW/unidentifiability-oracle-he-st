@@ -256,11 +256,16 @@ def risk_coverage_curve(
     return np.array(out)
 
 
+_TRAPZ = getattr(
+    np, "trapezoid", getattr(np, "trapz", None)
+)  # np.trapz removed in NumPy 2.0
+
+
 def aurc(curve: np.ndarray) -> float:
     """Area under the risk-coverage curve (lower = more efficient deferral)."""
     cov, risk = curve[:, 0], curve[:, 1]
     o = np.argsort(cov)
-    return float(np.trapz(risk[o], cov[o]))
+    return float(_TRAPZ(risk[o], cov[o]))
 
 
 def selective_risk_curve(
