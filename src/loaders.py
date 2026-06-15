@@ -32,6 +32,9 @@ from .simulator import TriadData
 
 NICHE_UM = 100.0  # niche resolution (preregistration.md sec 11-D: never raw 55um Visium-spot resolution)
 MIN_CELLS_PER_BIN = 20
+XENIUM_UM_PER_PX = (
+    0.2125  # Xenium pixel size; the H&E<->Xenium homography is in Xenium pixels (SB4)
+)
 
 
 def load_xenium_noise_floor(
@@ -92,7 +95,7 @@ def _load_morph(root: Path, centers: np.ndarray) -> np.ndarray:
     homog = xio._first_existing(
         root / "rep1", ("*HE*homography.csv.gz", "*homography.csv*")
     )  # noqa: SLF001
-    mf = embed_bins(he, centers, homog, encoder="uni")
+    mf = embed_bins(he, centers, homog, encoder="uni", um_per_px=XENIUM_UM_PER_PX)
     if not mf.is_confirmatory:
         print(
             f"[loaders] morphology encoder = '{mf.encoder_name}' (FALLBACK). This triad run is "

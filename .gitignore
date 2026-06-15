@@ -11,6 +11,8 @@ data/
 *.npz
 wandb/
 runs/
+# derived artifacts (npz + figures) -- regenerate via the experiment scripts
+experiments/results/
 # python
 __pycache__/
 *.pyc

@@ -4,10 +4,14 @@ A **selective-risk (abstention) layer** for virtual spatial transcriptomics that
 unpredictability (morphology genuinely cannot determine a gene) from _technical_ dropout (measurement
 noise), using a cleaner Xenium reference as the truth check.
 
-> Scope honesty (audit rollout 9→10): the post-hoc **conformal coverage guarantee** is the planned
-> HYBRID stage — it is **not yet implemented** in this repo (no conformal/coverage machinery here yet), so
-> avoid calling the current layer "coverage-guaranteed". `U` is an **upper bound** on intrinsic
-> unidentifiability, conditional on the predictor's recoverable signal (`preregistration.md` §11-B).
+> Scope honesty (rollout 16): the post-hoc **conformal coverage layer** is now implemented
+> (`src/conformal.py`: split + spatial-Mondrian) and gives a **marginal** distribution-free coverage
+> guarantee — empirically valid + well-calibrated on real breast (0.902 at α=0.10). It does **not** give a
+> per-spot _conditional_ guarantee (impossible, Foygel-Barber 2021); naive coverage is spatially
+> heterogeneous (H1: worst block 0.839, miscoverage Moran's I p=0.005) and Mondrian only partially closes
+> it. `U` remains an **upper bound** on intrinsic unidentifiability conditional on the predictor's
+> recoverable signal (`preregistration.md` §11-B). All current results are **exploratory** (frozen ungated
+> DINOv2-S, breast only); the confirmatory end-to-end / UNI run is the GPU-cluster step.
 
 See the evidence chain and design docs:
 
@@ -28,7 +32,7 @@ validates the method machinery before any download. The real-data swap point is 
 
 ```bash
 python experiments/feasibility_breast.py --synthetic        # plumbing + logic check (no download)
-bash scripts/fetch_data.sh                                  # download GSE243280 Rep1/Rep2 (large)
+bash scripts/fetch_data.sh data full                        # download GSE243280 Rep1/Rep2 + H&E (large)
 python scripts/check_panel.py data/rep1 data/rep2           # confirm identical Xenium panel
 python experiments/feasibility_breast.py --real data/       # the real gate (after wiring loaders.py)
 ```
@@ -47,3 +51,29 @@ python tests/test_gate.py     # ranking-based separation + a NEGATIVE CONTROL (a
 The gate uses a nonlinear (RandomForest) substrate `f`, a different-architecture `f'` (KNN), a
 spatial-block CV split, and an explicit Xenium-replicate noise floor; the negative control shows a linear
 substrate inflates `U` on identifiable genes ~2× (audit rollout 9→10 hardening).
+
+## Running on the GPU cluster (the end-to-end fine-tune)
+
+All code is in this repo; **data is not** (gitignored, as research data should be). To run the end-to-end
+dual-head fine-tune on a SLURM cluster:
+
+```bash
+# 1. env -- install torch matching your cluster CUDA FIRST, then the rest
+pip install torch --index-url https://download.pytorch.org/whl/cu121   # pick your CUDA
+pip install -r requirements.txt
+
+# 2. training data -- NOT in git (gitignored derived data). If you ALREADY built it locally
+#    (experiments/build_patches.py, which needs the full GSE243280 download), transfer the 37 MB tensor:
+rsync -avP data/cache/patches_breast.npz <cluster>:<repo>/data/cache/
+#    OR regenerate it on the cluster from the raw GSE243280 breast data:
+python3 experiments/build_patches.py data --bin-um 300      # needs data/rep1 + data/rep2
+
+# 3. submit the multi-GPU end-to-end fine-tune (torchrun/DDP)
+BACKBONE=vit_small_patch14_dinov2.lvd142m \
+DATA=data/cache/patches_breast.npz ENSEMBLE=5 EPOCHS=300 \
+sbatch scripts/train_dualhead.sbatch
+```
+
+Omit `BACKBONE=` for the cheaper frozen-embedding scale-up (`data/cache/dualhead_breast.npz`). Cluster
+bugs from the rollout-18 audit (DDP `device_ids`, shared-backbone ensemble, seed-pinning) are fixed; the
+checkpoints are stamped with `encoder_name` + `is_confirmatory` so a frozen run is never mistaken for UNI.

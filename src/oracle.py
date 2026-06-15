@@ -220,7 +220,12 @@ def spatial_structure(
 ) -> dict:
     """Moran's I of the per-spot aleatoric map over the highest-U genes (is the deferred U spatially
     structured?). Uses the top-U set rather than the BH flag: because U upper-bounds (it carries finite
-    learner error), the flag can saturate, so the *ranking* is the meaningful selective-layer signal."""
+    learner error), the flag can saturate, so the *ranking* is the meaningful selective-layer signal.
+
+    Guard (audit B): if U has zero spread (e.g. fully floor-clipped to 0), the top-U set is an arbitrary
+    argsort tie-order, so Moran's I would be a meaningless artifact -> return NaN, not a fake number."""
+    if np.ptp(res.U) < 1e-12:
+        return {"morans_i": float("nan"), "pvalue": float("nan")}
     top = top_u_genes(res, top_frac)
     a_spot = np.clip(res.resid2[:, top] - res.epistemic[:, top], 0, None).mean(1)
     w = grid_weights(triad.coords)
@@ -228,17 +233,43 @@ def spatial_structure(
     return {"morans_i": mi, "pvalue": p}
 
 
+def risk_coverage_curve(
+    order_score: np.ndarray, error: np.ndarray, grid: int = 20
+) -> np.ndarray:
+    """Selective-risk-coverage curve: abstain on the highest-`order_score` items first.
+
+    Returns (grid, 2): columns = [retained_fraction, mean_error_on_retained]. Keeping the lowest-score
+    (most identifiable) items first, this is the real utility metric (preregistration.md sec 5): a better
+    deferral signal pushes more error onto the abstained set, so risk on the retained set falls faster as
+    coverage drops. Works for any score (raw-variance-U, the trained dual-head's U, an oracle, ...), so the
+    baseline and the HYBRID head are compared on one footing.
+    """
+    order_score = np.asarray(order_score, dtype=float)
+    error = np.asarray(error, dtype=float)
+    order = np.argsort(order_score)  # keep low-score (most identifiable) first
+    n = order_score.size
+    out = []
+    for frac in np.linspace(1.0, 0.05, grid):
+        k = max(1, int(round(frac * n)))
+        keep = order[:k]
+        out.append((k / n, float(np.mean(error[keep]))))
+    return np.array(out)
+
+
+_TRAPZ = getattr(
+    np, "trapezoid", getattr(np, "trapz", None)
+)  # np.trapz removed in NumPy 2.0
+
+
+def aurc(curve: np.ndarray) -> float:
+    """Area under the risk-coverage curve (lower = more efficient deferral)."""
+    cov, risk = curve[:, 0], curve[:, 1]
+    o = np.argsort(cov)
+    return float(_TRAPZ(risk[o], cov[o]))
+
+
 def selective_risk_curve(
     res: OracleResult, error: np.ndarray, grid: int = 20
 ) -> np.ndarray:
-    """Retained-fraction vs selective-risk: abstain on highest-U genes first.
-
-    Returns (grid, 2): columns = [retained_fraction, mean_error_on_retained]. `error` is per-gene loss.
-    """
-    order = np.argsort(res.U)  # keep low-U (most identifiable) first
-    out = []
-    for frac in np.linspace(1.0, 0.05, grid):
-        k = max(1, int(frac * res.U.size))
-        keep = order[:k]
-        out.append((k / res.U.size, float(np.mean(error[keep]))))
-    return np.array(out)
+    """Retained-fraction vs selective-risk for an OracleResult, abstaining on highest-U genes first."""
+    return risk_coverage_curve(res.U, error, grid)

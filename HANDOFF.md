@@ -2,30 +2,95 @@
 
 Single entry point for resuming in a fresh session. Read this first, then `decision-ledger.jsonl`.
 
-## ⟶ RESUME HERE (rollout 14, 2026-06-12) — build the trainable HYBRID
+## ⟶ RESUME HERE (rollout 20, 2026-06-15) — cluster-free work COMPLETE, audited, fix-reviewed; only GPU/data-gated left
 
-**`main` is current** — PR #1 (rollouts 8–14) merged at `2f50a08`. Public repo `aayanAW/unidentifiability-oracle-he-st`. Start the next session with `git checkout main && git checkout -b feat/hybrid-build`. State since the original handoff below:
+**Branch `feat/hybrid-build`** (PR #2 open, public `aayanAW/unidentifiability-oracle-he-st`). Off `main` @ `2f50a08`. Working tree **clean**, all pushed. All cluster-free deliverables built → **re-audited (ultracode, rollout 18, 23 confirmed)** → **fixed (rollout 19)** → **the fixes themselves reviewed (rollout 20, 9 confirmed, all fixed)**. **8 suites green, ruff clean.**
 
-- **Cross-model audit done** (rollout 9, `audit_report.md`): Claude + Codex gpt-5.5. 5 confirmed criticals.
-- **Audit fixes done** (rollout 10): nonlinear RF substrate + failable gate w/ negative control, σ²_reg explicit, 2× noise-floor, spatial-block CV, KNN f′, bash-3.2 fetch, adaptive `grid_weights`, zip hardening. Gate green, ruff clean.
-- **Real data downloaded** (public GEO): breast Xenium Rep1/Rep2 matrices + H&E (1.4 GB ea) + homography. `data/` (gitignored). Disk ~12 GB free — **other 4 organs NOT downloaded (won't fit; not needed yet)**.
-- **Real noise floor** (rollout 11): K4 clears at **≥300 µm niches** (18.5% of 313 genes), dominates <250 µm. Resolution-constrained.
-- **Exploratory real U** (rollout 14, frozen DINOv2-S, EXPLORATORY not confirmatory): after the **SB4 registration fix** (`Hinv @ Xenium-px`), morph→ST predicts **58% of genes** (R² max 0.38, median +0.073), biologically coherent, U spatially structured. **Vacuity risk de-risked. GREEN.** Run: `python3 experiments/exploratory_u_breast.py data --bin-um 300 --encoder vit_small_patch14_dinov2.lvd142m`.
-- **Direction (rollout 12):** move to a **GPU-trained HYBRID** `f` on an **HPC cluster (SLURM/DDP — NOT Modal)**; fine-tune an **ungated** backbone (removes the UNI blocker). Not a novelty pivot. Proposal (`proposal.pdf`) reflects it.
+**To resume:** `cd "/Users/aayanalwani/Computer Vision" && git checkout feat/hybrid-build`. Read this block + `decision-ledger.jsonl` rollouts 15→20. Then run on the cluster (see "Running on the GPU cluster" in `README.md`). The **only step git can't do is moving the data** — `data/cache/patches_breast.npz` (37 MB) is gitignored; `rsync` it to the cluster or rebuild via `python3 experiments/build_patches.py data --bin-um 300`. Deps: `pip install -r requirements.txt` (torch matched to cluster CUDA first).
 
-**Next actions (Tier-2 HYBRID build — cluster-independent to write + smoke-test; full run on cluster):**
+**Rollout 20 (review of the rollout-19 fixes) added:** fixed a numpy-2 crash (`aurc` used removed `np.trapz` → `np.trapezoid`), a Clopper-Pearson cell-vs-niche unit bug, a residual HANDOFF over-claim, and a permuted-U **null floor (0.004)** confirming the 0.601 independent calibration is robustly above chance. `requirements.txt` + a cluster runbook in `README.md` are new.
 
-1. Port the SB4 registration fix (`experiments/exploratory_u_breast.py:_patches_lazy`) into `src/embeddings.py` + `src/loaders.py` (real pipeline).
-2. `src/predictor.py` — trainable `f`: ungated backbone (`vit_small_patch14_dinov2.lvd142m` or CTransPath) + H&E→ST head + dual variance head (β-NLL).
-3. `src/train.py` — AMP, checkpointing, `torchrun`/DDP-ready, deep-ensemble; SLURM `sbatch`. Smoke-test on CPU/MPS (tiny), full run on cluster.
-4. Wire trained `f` as the `run_oracle` substrate; recompute U vs the frozen baseline (does training tighten it?).
-5. Compute the **selective-risk-coverage curve** (the real utility metric) — the headline result.
+**⚠ Rollout-18/19 audit corrected several over-claimed/degenerate numbers — use THESE, not the older rollout-15/17 digits:**
 
-**Push to GitHub as you write** — commit + push per logical unit (registration port, predictor, train script, gate update), not one big end-commit. Always public. Append a rollout-N entry to `decision-ledger.jsonl` per decision.
+- **Independent calibration = Spearman(U_rf, error_knn) = 0.601** (pre-registered non-circular check via the knn f′ arm; **permuted-U null floor = 0.004**, so 0.601 is robustly above chance — the shared-z_est-target confound is negligible). The earlier **0.916** was `Spearman(U_rf, error_rf)` = **self-referential** (U_rf derived from the same residuals) — do NOT cite it as validation.
+- **Selective product (the real signal = risk concentration):** at 50% retention U-ranking gives **9.7% lower retained error than random and MATCHES the perfect oracle** (0.475 vs 0.473). The 6% interval-width tightening is largely mechanical — don't headline it. Coverage holds near 0.90 for retention ≥20% (dips to 0.885 at 10%).
+- **H1: SUPPORTED** on the **load-bearing Moran's test** — miscoverage is spatially structured across all niches (Moran's I=0.263, **p=0.005**). The single worst-block point (0.839) is **NOT individually significant** (niche-level Clopper-Pearson 95% CI 0.544–0.960 spans 0.90, n=16). Spatial-Mondrian **remediation is PARTIAL** (closes ~24% of the gap; a different block regresses) — NOT "restored".
+- **DDH-U is DEGENERATE on frozen breast** (variance head collapses U to all-zeros). The earlier "DDH-U efficiency −0.074" + "Moran 0.34" were argsort-on-constant **artifacts → now reported UNDEFINED**. Honest negative = the frozen variance head collapses; the cluster end-to-end `f` is the bet.
+- **Synthetic proxy** still supports the bet (mechanism works when signal is learnable) — now behind a **failable** test (RF-baseline gate + epochs=0 control), not the old tautology.
 
-**Cluster boundary:** steps 1–4 above are CLUSTER-FREE on this Mac (incl. training the dual-head on FROZEN cached embeddings = first trained-oracle result). Cluster (SLURM/DDP — NOT Modal) is ONLY for the later end-to-end backbone fine-tune + scaling to 5 organs + Xenium-5K.
+**Audit-fixed code:** 2 cluster-blockers — DDP `device_ids=[None]` crash + shared-backbone degenerate ensemble — fixed before any GPU spend; torch init seed-pinned; degenerate-U guards in `_efficiency`/`spatial_structure`; repro stamps (git SHA + seed) persisted in every npz.
 
-- Deps installed this session: `tifffile`, `timm`, `zarr<3`. Awaiting cluster access (user runs on cluster, not Modal).
+**Rollout 17 (second cluster-free wave) added:**
+
+- **#1 — selective × conformal integration (THE PRODUCT)** `src/conformal.py:selective_conformal_sweep` + `experiments/selective_conformal_breast.py`: abstain on highest-U genes, then split-conformal on the retained niche-gene cells. Breast 300µm: coverage holds ~0.90 across retained fractions; interval width tightens (2.374→2.230 at 50% retention, ~6%). Real + valid; **marginal** (not conditional/cell-level) guarantee, honestly caveated.
+- **#2 — σ-normalized adaptive intervals (honest negative)**: the frozen dual-head variance head does NOT buy tighter intervals at equal held-out coverage (normalized 2.861 > marginal 2.514). Mis-allocates width; consistent with rollout-15.
+- **#4 — synthetic U-tightening proxy** `experiments/synthetic_u_proxy.py`: **SUPPORTS the cluster bet** on planted truth — the trained dual head tightens U on identifiable genes ~6× (U(A) 0.522→0.083), separation U(C)/U(A) 2.14→17.36. Necessary-not-sufficient → the frozen-breast failure is a data/capacity limit, not a method flaw. Synthetic ≠ real.
+- **#3 — TISSUE baseline: SKIPPED honestly** (more meaningful against a confirmatory result than frozen-exploratory breast).
+- **Cross-model review**: 2 Claude reviewers converged on a self-coverage HIGH bug (fixed → proper held-out split); **Codex (GPT) confirmed the fix sound, no remaining findings**.
+
+**What remains (GPU- or data-gated ONLY):**
+
+1. **End-to-end backbone fine-tune** (GPU): `BACKBONE=vit_small_patch14_dinov2.lvd142m DATA=data/cache/patches_breast.npz sbatch scripts/train_dualhead.sbatch`. The open bet — does jointly-trained `f` lift DDH-U above RF + make σ-normalized intervals win + clear K2? (#4 says the mechanism works when signal is learnable.)
+2. **Deep ensemble across architectures** (`fit_ensemble` built).
+3. **5 organs + Xenium-5K** (GPU + data: liver/HCC/ovary have no Xenium replicate; disk tight).
+4. **TISSUE baseline** (post-cluster comparison).
+
+There is **no remaining cluster-free build work**. Next session resumes on the cluster.
+
+---
+
+### Prior: rollout 16 (cluster-free completion) — context
+
+Every cluster-free component is built + green; what remains needs the GPU cluster or more data.
+
+**Rollout 16 (cluster-free completion) added:**
+
+- **Conformal layer** (`src/conformal.py`, the missing Phase-3 PDC): split (marginal) + spatial-Mondrian (group-conditional) + σ-normalized scores. **First real H1 result** (`experiments/conformal_breast.py`): marginal coverage valid + well-calibrated (0.902/0.952/0.804), but naive coverage is spatially heterogeneous (worst block **0.839 < 0.90**, miscoverage **Moran's I=0.263, p=0.005**); spatial-Mondrian tightens it (spread 0.114→0.087, worst 0.839→0.854). H1 SUPPORTED.
+- **End-to-end de-risked**: ImageNet-normalization added inside the backbone path; full `--backbone` CLI smoke validated (DINOv2-S builds, normalizes, fits, checkpoints with `encoder_name`/`is_confirmatory`). `experiments/build_patches.py` → `data/cache/patches_breast.npz` (399×3×224×224) so the cluster run is one submit.
+- **Figures**: `experiments/make_figures.py` (selective-risk-coverage + H1 coverage).
+- **README honesty** updated (conformal now implemented; marginal-not-conditional).
+
+**What remains (GPU- or data-gated only):**
+
+1. **End-to-end backbone fine-tune** (GPU): `BACKBONE=vit_small_patch14_dinov2.lvd142m DATA=data/cache/patches_breast.npz sbatch scripts/train_dualhead.sbatch`. The open scientific bet — does a jointly-trained `f` lift DDH-U above the RF baseline + clear K2?
+2. **Deep ensemble across architectures** (epistemic term + independent-f′ arm; `fit_ensemble` built + tested). Planned cluster mechanism; a frozen 3-member run won't flip the DDH conclusion (floor-clipping, not seed variance).
+3. **5 organs + Xenium-5K** (GPU + data: liver/HCC/ovary have NO Xenium technical replicate; disk tight).
+4. **TISSUE baseline** comparison (can be added cluster-free later if wanted).
+5. **Open the PR** for `feat/hybrid-build`.
+
+---
+
+### Prior: rollout 15 (Tier-2 HYBRID build) — superseded header kept for context
+
+The Tier-2 cluster-free HYBRID build is DONE; the first trained-oracle result is in.
+
+**What landed this session (rollout 15):**
+
+1. **SB4 registration ported** into the real pipeline (`src/embeddings.py` + `src/loaders.py`): `inv(H) @ (centers_um/um_per_px)` + a memory-safe lazy zarr window reader. Validated **399/399 niches in-bounds** on real breast (the rollout-14 invariant).
+2. **`src/predictor.py`** — `DualHeadOracle`: ungated DINOv2-S backbone (or frozen embeddings) → shared trunk → mean head + log-variance head; **β-NLL** loss (Seitzer 2022).
+3. **`src/train.py`** — `fit_dual_head` (AMP cuda-only, DDP when `WORLD_SIZE>1`, deep ensemble, checkpointing) + CLI (frozen-embedding and `--backbone` end-to-end modes) + **`scripts/train_dualhead.sbatch`** (torchrun-under-SLURM).
+4. **`src/oracle.py`** — `risk_coverage_curve` + `aurc` (the selective-risk-coverage utility metric).
+5. **`experiments/trained_oracle_breast.py`** — the FIRST trained-oracle result.
+
+**First trained-oracle result (breast @300 µm, frozen DINOv2-S, EXPLORATORY — `python3 experiments/trained_oracle_breast.py data --bin-um 300`):**
+
+> ⚠ **SUPERSEDED by rollout-18/19 audit — use the corrected block at the TOP of this file.** The numbers below were the rollout-15 framing; the audit found `Spearman(U,error)=0.916` and `eff 0.784` are **self-referential** (do NOT cite as validation; independent = `Spearman(U_rf,error_knn)=0.601`), and the **DDH-U −0.074 is a degenerate `argsort`-on-constant artifact → UNDEFINED**. Kept verbatim only for trace.
+
+- ~~The frozen-RF raw-variance oracle is a STRONG real selective system: efficiency 0.784, Spearman(U,error)=0.916.~~ → self-referential (see top-of-file correction).
+- ~~head-to-head RF-U eff 0.524 vs DDH-U eff −0.074; DDH raw-variance 0.386~~ → DDH-U UNDEFINED (`U_ddh` fully floor-clipped). Mean head R² max 0.396, 130/313 genes (this part stands).
+- **Verdict MIXED, reported straight (not a kill).** Frozen embeddings + ~399 niches favor the RF ensemble variance; the dual-head's advantage is the **pre-registered end-to-end cluster bet**. No hyperparameter chasing.
+
+**Review:** 4-dim adversarial Workflow → 14 confirmed findings (2-skeptic verified) → **all fixed** (channels-first all-zero patches, SB4 in-bounds invariant, real `--backbone` wiring, artifact labeling, GradScaler, efficiency normalizer, atomic gunzip, device-safe OOF, `--rdzv-id`, RF-defined C1 mask, …). 6 test suites green, ruff clean.
+
+**Next actions (the cluster end-to-end bet — needs cluster access):**
+
+1. Build the **image-patch dataset** `data/cache/patches_breast.npz` (X=(N,3,224,224) uint8 via `embeddings._extract_patches`, Y=z_est) for true end-to-end mode.
+2. Run `BACKBONE=vit_small_patch14_dinov2.lvd142m DATA=data/cache/patches_breast.npz sbatch scripts/train_dualhead.sbatch` on the cluster (end-to-end fine-tune).
+3. Scale to **5 organs + Xenium-5K**; re-evaluate: does a jointly-trained `f` lift DDH-U above the RF baseline and clear the 15% utility floor (K2)?
+
+**Then:** open the PR for `feat/hybrid-build` once the cluster result lands (or sooner if merging the build is wanted). Append rollout-N to `decision-ledger.jsonl` per decision; commit + push per logical unit.
+
+**Cluster boundary:** steps 1–3 are the cluster step (SLURM/DDP — NOT Modal). Everything in rollout 15 ran cluster-free on this Mac. Deps: `tifffile`, `timm`, `zarr<3`, `torch 2.0.0` (MPS).
 
 ---
 

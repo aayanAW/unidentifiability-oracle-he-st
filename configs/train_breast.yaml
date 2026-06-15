@@ -1,0 +1,13 @@
+# Dual-head oracle training config (breast). CLI flags override these (see scripts/train_dualhead.sbatch).
+# Frozen-embedding run is cluster-free (experiments/trained_oracle_breast.py); end-to-end run uses this on
+# the SLURM cluster. Real source locked: GSE243280 GSM7780153 + GSM7780154, niche bin >= 300um (rollout 11).
+epochs: 300
+lr: 0.001
+weight_decay: 0.0001
+batch_size: 128
+beta: 0.5 # beta-NLL (Seitzer et al. 2022); 0.5 keeps heteroscedastic signal without variance-head collapse
+grad_clip: 5.0
+trunk: [512, 256]
+ensemble: 5 # deep ensemble -> epistemic term + independent-f' arm (audit C3)
+backbone: vit_small_patch14_dinov2.lvd142m # ungated DINOv2-S; APPLIED ONLY in end-to-end mode (BACKBONE= or --backbone). Ignored for frozen-embedding runs.
+niche_bin_um: 300 # K4 clears only at >= ~300um on breast (rollout 11); finer is exploratory/negative
