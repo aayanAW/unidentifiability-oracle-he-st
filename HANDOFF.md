@@ -2,9 +2,13 @@
 
 Single entry point for resuming in a fresh session. Read this first, then `decision-ledger.jsonl`.
 
-## ⟶ RESUME HERE (rollout 19, 2026-06-14) — cluster-free work COMPLETE + audit-corrected; only GPU/data-gated left
+## ⟶ RESUME HERE (rollout 20, 2026-06-15) — cluster-free work COMPLETE, audited, fix-reviewed; only GPU/data-gated left
 
-**Branch `feat/hybrid-build`** (PR #2 open, public `aayanAW/unidentifiability-oracle-he-st`). Off `main` @ `2f50a08`. All cluster-free deliverables built, then **re-audited (ultracode, rollout 18) + fixed (rollout 19)**. 8 suites green.
+**Branch `feat/hybrid-build`** (PR #2 open, public `aayanAW/unidentifiability-oracle-he-st`). Off `main` @ `2f50a08`. Working tree **clean**, all pushed. All cluster-free deliverables built → **re-audited (ultracode, rollout 18, 23 confirmed)** → **fixed (rollout 19)** → **the fixes themselves reviewed (rollout 20, 9 confirmed, all fixed)**. **8 suites green, ruff clean.**
+
+**To resume:** `cd "/Users/aayanalwani/Computer Vision" && git checkout feat/hybrid-build`. Read this block + `decision-ledger.jsonl` rollouts 15→20. Then run on the cluster (see "Running on the GPU cluster" in `README.md`). The **only step git can't do is moving the data** — `data/cache/patches_breast.npz` (37 MB) is gitignored; `rsync` it to the cluster or rebuild via `python3 experiments/build_patches.py data --bin-um 300`. Deps: `pip install -r requirements.txt` (torch matched to cluster CUDA first).
+
+**Rollout 20 (review of the rollout-19 fixes) added:** fixed a numpy-2 crash (`aurc` used removed `np.trapz` → `np.trapezoid`), a Clopper-Pearson cell-vs-niche unit bug, a residual HANDOFF over-claim, and a permuted-U **null floor (0.004)** confirming the 0.601 independent calibration is robustly above chance. `requirements.txt` + a cluster runbook in `README.md` are new.
 
 **⚠ Rollout-18/19 audit corrected several over-claimed/degenerate numbers — use THESE, not the older rollout-15/17 digits:**
 
