@@ -95,6 +95,28 @@ def test_fit_dual_head_image_mode_with_backbone():
     )
 
 
+def test_fit_dual_head_deterministic_when_seeded_before_construction():
+    """Seeding torch before model construction must make fit_dual_head bit-reproducible (audit E)."""
+    X, Y = _linear_gaussian(seed=3)
+    idx = np.arange(len(X))
+    cfg = TrainConfig(
+        epochs=15, lr=1e-2, batch_size=64, device="cpu", amp=False, seed=0
+    )
+
+    def run():
+        torch.manual_seed(123)  # seed BEFORE construction pins weight init too
+        m = DualHeadOracle(
+            n_genes=Y.shape[1], in_dim=X.shape[1], trunk_dims=(16,), dropout=0.0
+        )
+        m, _ = fit_dual_head(m, X, Y, idx[40:], idx[:40], cfg)
+        return m.predict(torch.from_numpy(X[:8]))[0]
+
+    a, b = run(), run()
+    assert torch.allclose(a, b), (
+        "fit_dual_head must be deterministic when seeded before construction"
+    )
+
+
 def test_checkpoint_round_trip(tmp_path):
     X, Y = _linear_gaussian(seed=1)
     model = DualHeadOracle(
@@ -129,6 +151,7 @@ if __name__ == "__main__":
     test_pick_device_and_distributed_guard()
     test_fit_dual_head_reduces_val_loss()
     test_fit_dual_head_image_mode_with_backbone()
+    test_fit_dual_head_deterministic_when_seeded_before_construction()
     with tempfile.TemporaryDirectory() as d:
         test_checkpoint_round_trip(Path(d))
         test_smoke_cli_writes_checkpoint(Path(d))

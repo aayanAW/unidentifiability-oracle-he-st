@@ -134,8 +134,13 @@ def fit_dual_head(
     if distributed:
         from torch.nn.parallel import DistributedDataParallel as DDP
 
+        # device_ids=[device.index] is [None] for torch.device("cuda") (no ordinal) and crashes DDP init;
+        # maybe_init_distributed() already called set_device(local_rank), so use the current device ordinal.
         train_module = DDP(
-            model, device_ids=[device.index] if device.type == "cuda" else None
+            model,
+            device_ids=(
+                [torch.cuda.current_device()] if device.type == "cuda" else None
+            ),
         )
 
     opt = torch.optim.AdamW(
@@ -332,7 +337,6 @@ def main(argv: list[str] | None = None) -> int:
 
     # END-TO-END mode: build the ungated backbone (the cluster step). It consumes image patches, so the
     # data must be 4D (N,3,H,W); a 2D embedding .npz is the frozen-embedding mode (backbone stays None).
-    backbone = None
     in_dim = int(X.shape[1])
     encoder_name = "frozen-embeddings"
     if backbone_name:
@@ -341,7 +345,10 @@ def main(argv: list[str] | None = None) -> int:
                 f"--backbone {backbone_name} is end-to-end mode and needs image patches (N,3,H,W); "
                 f"got X.ndim={X.ndim}. Drop --backbone to train on frozen embeddings."
             )
-        backbone, in_dim = make_backbone(backbone_name, pretrained=True, freeze=False)
+        # in_dim from a throwaway probe; each ENSEMBLE MEMBER gets its OWN backbone below (a shared backbone
+        # would train member 0's weights into member 1 -> a degenerate, correlated deep ensemble).
+        _probe, in_dim = make_backbone(backbone_name, pretrained=False, freeze=True)
+        del _probe
         encoder_name = backbone_name
     # honesty: only the pre-registered gated encoders are confirmatory (preregistration.md sec 10)
     is_confirmatory = bool(args.confirmatory) and backbone_name in {
@@ -360,10 +367,18 @@ def main(argv: list[str] | None = None) -> int:
 
     out = Path(args.out)
     for m in range(ensemble):
+        # seed BEFORE construction so weight init is deterministic (fit_dual_head's seed only pins the
+        # fold splits + loader shuffle, which run after init). Each member gets its own backbone instance.
+        torch.manual_seed(cfg.seed + m)
+        member_backbone = (
+            make_backbone(backbone_name, pretrained=True, freeze=False)[0]
+            if backbone_name
+            else None
+        )
         model = DualHeadOracle(
             n_genes=int(Y.shape[1]),
             in_dim=in_dim,
-            backbone=backbone,
+            backbone=member_backbone,
             trunk_dims=tuple(args.trunk),
         )
         model, hist = fit_dual_head(
