@@ -51,3 +51,28 @@ python tests/test_gate.py     # ranking-based separation + a NEGATIVE CONTROL (a
 The gate uses a nonlinear (RandomForest) substrate `f`, a different-architecture `f'` (KNN), a
 spatial-block CV split, and an explicit Xenium-replicate noise floor; the negative control shows a linear
 substrate inflates `U` on identifiable genes ~2× (audit rollout 9→10 hardening).
+
+## Running on the GPU cluster (the end-to-end fine-tune)
+
+All code is in this repo; **data is not** (gitignored, as research data should be). To run the end-to-end
+dual-head fine-tune on a SLURM cluster:
+
+```bash
+# 1. env -- install torch matching your cluster CUDA FIRST, then the rest
+pip install torch --index-url https://download.pytorch.org/whl/cu121   # pick your CUDA
+pip install -r requirements.txt
+
+# 2. training data -- NOT in git. Either transfer the pre-built patch tensor (37 MB):
+rsync -avP data/cache/patches_breast.npz <cluster>:<repo>/data/cache/
+#    OR regenerate it on the cluster from the raw GSE243280 breast data:
+python3 experiments/build_patches.py data --bin-um 300      # needs data/rep1 + data/rep2
+
+# 3. submit the multi-GPU end-to-end fine-tune (torchrun/DDP)
+BACKBONE=vit_small_patch14_dinov2.lvd142m \
+DATA=data/cache/patches_breast.npz ENSEMBLE=5 EPOCHS=300 \
+sbatch scripts/train_dualhead.sbatch
+```
+
+Omit `BACKBONE=` for the cheaper frozen-embedding scale-up (`data/cache/dualhead_breast.npz`). Cluster
+bugs from the rollout-18 audit (DDP `device_ids`, shared-backbone ensemble, seed-pinning) are fixed; the
+checkpoints are stamped with `encoder_name` + `is_confirmatory` so a frozen run is never mistaken for UNI.
