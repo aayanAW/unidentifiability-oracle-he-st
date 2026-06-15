@@ -2,9 +2,19 @@
 
 Single entry point for resuming in a fresh session. Read this first, then `decision-ledger.jsonl`.
 
-## ⟶ RESUME HERE (rollout 17, 2026-06-14) — cluster-free work COMPLETE; only GPU/data-gated work left
+## ⟶ RESUME HERE (rollout 19, 2026-06-14) — cluster-free work COMPLETE + audit-corrected; only GPU/data-gated left
 
-**Branch `feat/hybrid-build`** (PR #2 open, ~16 commits, public `aayanAW/unidentifiability-oracle-he-st`). Off `main` @ `2f50a08`. Every high-value cluster-free deliverable is built, cross-model validated, and green.
+**Branch `feat/hybrid-build`** (PR #2 open, public `aayanAW/unidentifiability-oracle-he-st`). Off `main` @ `2f50a08`. All cluster-free deliverables built, then **re-audited (ultracode, rollout 18) + fixed (rollout 19)**. 8 suites green.
+
+**⚠ Rollout-18/19 audit corrected several over-claimed/degenerate numbers — use THESE, not the older rollout-15/17 digits:**
+
+- **Independent calibration = Spearman(U_rf, error_knn) = 0.601** (the pre-registered non-circular check via the knn f′ arm). The earlier **0.916** was `Spearman(U_rf, error_rf)` = **self-referential** (U_rf derived from the same residuals) — do NOT cite it as validation.
+- **Selective product (the real signal = risk concentration):** at 50% retention U-ranking gives **9.7% lower retained error than random and MATCHES the perfect oracle** (0.475 vs 0.473). The 6% interval-width tightening is largely mechanical — don't headline it. Coverage holds near 0.90 for retention ≥20% (dips to 0.885 at 10%).
+- **H1: SUPPORTED** — spatial under-coverage is real (naive worst block 0.839 < 0.90, miscoverage Moran's I=0.263, **p=0.005**). Spatial-Mondrian **remediation is PARTIAL** (closes ~24% of the gap, and a different block regresses) — NOT "restored".
+- **DDH-U is DEGENERATE on frozen breast** (variance head collapses U to all-zeros). The earlier "DDH-U efficiency −0.074" + "Moran 0.34" were argsort-on-constant **artifacts → now reported UNDEFINED**. Honest negative = the frozen variance head collapses; the cluster end-to-end `f` is the bet.
+- **Synthetic proxy** still supports the bet (mechanism works when signal is learnable) — now behind a **failable** test (RF-baseline gate + epochs=0 control), not the old tautology.
+
+**Audit-fixed code:** 2 cluster-blockers — DDP `device_ids=[None]` crash + shared-backbone degenerate ensemble — fixed before any GPU spend; torch init seed-pinned; degenerate-U guards in `_efficiency`/`spatial_structure`; repro stamps (git SHA + seed) persisted in every npz.
 
 **Rollout 17 (second cluster-free wave) added:**
 
