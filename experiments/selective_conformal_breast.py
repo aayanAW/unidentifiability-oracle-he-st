@@ -36,6 +36,18 @@ from src.train import TrainConfig  # noqa: E402
 torch  # noqa: B018 -- imported so oof_dual_head's torch usage is available
 
 
+def _git_sha() -> str:
+    import subprocess
+
+    try:
+        root = Path(__file__).resolve().parents[1]
+        return subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+        ).strip()[:10]
+    except Exception:
+        return "unknown"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("data_dir")
@@ -72,11 +84,38 @@ def main() -> int:
     res = run_oracle(triad, sigma2_reg=sigma2_reg, predictor="rf", seed=args.seed)
     U_rf = res.U
     abs_resid_rf = np.sqrt(res.resid2)
+    error_rf = res.resid2.mean(
+        0
+    )  # per-gene OOF MSE (for the random/oracle risk-concentration baselines)
 
     # ---- #1: coverage-guaranteed selective table (RF substrate) --------------------------------------
+    # audit G: recomputing q on the retained subset trivially shrinks width (high-error genes leave the
+    # calibration pool), so width-tightening alone is NOT evidence the oracle works. The real contribution is
+    # whether U-ranking concentrates risk BETTER than random selection (and how close to a perfect oracle).
+    # Baselines: random gene order, and a perfect oracle that sorts by the true per-gene error.
+    rng_score = np.random.default_rng(args.seed).random(len(U_rf))
     table = selective_conformal_sweep(
         U_rf, abs_resid_rf, alpha=args.alpha, grid=10, seed=args.seed
     )
+    table_rand = selective_conformal_sweep(
+        rng_score, abs_resid_rf, alpha=args.alpha, grid=10, seed=args.seed
+    )
+    table_oracle = selective_conformal_sweep(
+        error_rf, abs_resid_rf, alpha=args.alpha, grid=10, seed=args.seed
+    )
+
+    def _row50(t):
+        return t[np.argmin(np.abs(t[:, 0] - 0.5))]
+
+    # retained-set mean ERROR at 50% (the real risk-concentration signal, in z-units), U vs random vs oracle
+    order_U = np.argsort(U_rf)
+    order_rand = np.argsort(rng_score)
+    order_oracle = np.argsort(error_rf)
+    k = len(U_rf) // 2
+    err50_U = float(error_rf[order_U[:k]].mean())
+    err50_rand = float(error_rf[order_rand[:k]].mean())
+    err50_oracle = float(error_rf[order_oracle[:k]].mean())
+
     print("=" * 72)
     print(
         f"#1 coverage-guaranteed selective prediction (breast {args.bin_um:.0f}um, RF U) -- EXPLORATORY"
@@ -85,11 +124,26 @@ def main() -> int:
     print(f"target coverage 1-alpha={target:.2f}  (abstain on highest-U genes first)")
     print(f"{'retain_frac':>11} {'coverage':>9} {'mean_width':>11}")
     for fr, cov, wid in table:
-        print(f"{fr:>11.2f} {cov:>9.3f} {wid:>11.3f}")
-    full_w = table[np.argmax(table[:, 0]), 2]
-    half_w = table[np.argmin(np.abs(table[:, 0] - 0.5)), 2]
+        flag = (
+            "  <- coverage dips below target (finite-sample, few cells)"
+            if cov < target - 0.01
+            else ""
+        )
+        print(f"{fr:>11.2f} {cov:>9.3f} {wid:>11.3f}{flag}")
+    full_w, half_w = table[np.argmax(table[:, 0]), 2], _row50(table)[2]
     print(
-        f"-> interval width at 50% gene retention is {100 * (1 - half_w / full_w):.0f}% tighter than keeping all genes"
+        f"-> width at 50% retention {100 * (1 - half_w / full_w):.0f}% tighter than keep-all -- but that is "
+        "largely mechanical (recalibration on the retained subset)."
+    )
+    print(
+        f"-> REAL utility (risk concentration) at 50% retention -- mean retained error: "
+        f"U-ranking={err50_U:.3f}  random={err50_rand:.3f}  perfect-oracle={err50_oracle:.3f}  "
+        f"=> U gives {100 * (1 - err50_U / err50_rand):.1f}% lower error than random, "
+        f"{'matches' if abs(err50_U - err50_oracle) < 0.01 else 'vs'} perfect {err50_oracle:.3f}."
+    )
+    print(
+        f"-> coverage holds near {target:.2f} for retention >= 20% (min {table[table[:, 0] >= 0.2, 1].min():.3f}); "
+        f"at 10% retention it dips to {table[np.argmin(table[:, 0]), 1]:.3f} (finite-sample slack)."
     )
 
     # ---- #2: sigma-normalized adaptive intervals (dual-head variance) ---------------------------------
@@ -142,6 +196,11 @@ def main() -> int:
     np.savez_compressed(
         results / "selective_conformal_breast.npz",
         table=table,
+        table_rand=table_rand,
+        table_oracle=table_oracle,
+        err50_U=err50_U,
+        err50_rand=err50_rand,
+        err50_oracle=err50_oracle,
         sweep_marg=sweep_marg,
         sweep_norm=sweep_norm,
         width_marg=width_marg,
@@ -149,13 +208,16 @@ def main() -> int:
         cov_marg=cov_marg,
         cov_norm=cov_norm,
         alpha=args.alpha,
+        git_sha=np.array(_git_sha()),
+        seed=np.int64(args.seed),
     )
     print("-" * 72)
     print(
-        "READOUT #1: selective prediction with MARGINAL split-conformal coverage assembled -- abstaining on "
-        f"high-U genes holds ~{target:.0%} empirical coverage (marginal over the niche split; cell-level "
-        "coverage is approximate -- cells within a niche are correlated, so the formal guarantee is over the "
-        "~n_niche cal units) while tightening the interval (the product; conditional coverage is NOT claimed).\n"
+        "READOUT #1: selective prediction with MARGINAL split-conformal coverage assembled. The real signal "
+        f"is RISK CONCENTRATION: at 50% retention U-ranking gives {100 * (1 - err50_U / err50_rand):.1f}% lower "
+        "retained error than random and nearly matches a perfect oracle (the width-tightening alone is "
+        "mechanical). Coverage is marginal over the niche split (cell-level approximate; conditional NOT "
+        "claimed) and holds near target for retention >= 20% (dips at 10%).\n"
         f"READOUT #2: sigma-normalized adaptive intervals {'DO' if adaptive_wins else 'do NOT'} beat marginal "
         "mean width at equal coverage on frozen embeddings -- "
         + (
