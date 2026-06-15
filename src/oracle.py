@@ -220,7 +220,12 @@ def spatial_structure(
 ) -> dict:
     """Moran's I of the per-spot aleatoric map over the highest-U genes (is the deferred U spatially
     structured?). Uses the top-U set rather than the BH flag: because U upper-bounds (it carries finite
-    learner error), the flag can saturate, so the *ranking* is the meaningful selective-layer signal."""
+    learner error), the flag can saturate, so the *ranking* is the meaningful selective-layer signal.
+
+    Guard (audit B): if U has zero spread (e.g. fully floor-clipped to 0), the top-U set is an arbitrary
+    argsort tie-order, so Moran's I would be a meaningless artifact -> return NaN, not a fake number."""
+    if np.ptp(res.U) < 1e-12:
+        return {"morans_i": float("nan"), "pvalue": float("nan")}
     top = top_u_genes(res, top_frac)
     a_spot = np.clip(res.resid2[:, top] - res.epistemic[:, top], 0, None).mean(1)
     w = grid_weights(triad.coords)

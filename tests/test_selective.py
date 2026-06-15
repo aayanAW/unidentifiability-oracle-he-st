@@ -14,7 +14,44 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.oracle import aurc, risk_coverage_curve  # noqa: E402
+from src.oracle import (  # noqa: E402
+    OracleResult,
+    aurc,
+    risk_coverage_curve,
+    spatial_structure,
+)
+from src.simulator import TriadData  # noqa: E402
+
+
+def test_spatial_structure_returns_nan_on_constant_U():
+    """When U has zero spread (fully floor-clipped), top-U is an arbitrary argsort tie-order -> Moran's I
+    must be NaN, not a fabricated number (audit B)."""
+    n, g = 50, 6
+    coords = (
+        np.stack(np.meshgrid(np.arange(10), np.arange(5)), -1)
+        .reshape(-1, 2)
+        .astype(float)[:n]
+    )
+    triad = TriadData(
+        coords,
+        np.zeros((n, 3)),
+        np.zeros((n, g)),
+        np.zeros((n, g)),
+        np.zeros((n, g)),
+        None,
+    )
+    res = OracleResult(
+        U=np.zeros(g),
+        pvalue=np.ones(g),
+        flagged=np.zeros(g, bool),
+        resid2=np.ones((n, g)),
+        epistemic=np.zeros((n, g)),
+        s2_xen=np.zeros(g),
+        target_noise=np.zeros(g),
+        dropout_score=np.zeros(g),
+    )
+    out = spatial_structure(triad, res)
+    assert np.isnan(out["morans_i"]) and np.isnan(out["pvalue"])
 
 
 def test_curve_shape_and_coverage_monotone():
@@ -46,4 +83,5 @@ def test_oracle_score_beats_random_beats_nothing():
 if __name__ == "__main__":
     test_curve_shape_and_coverage_monotone()
     test_oracle_score_beats_random_beats_nothing()
+    test_spatial_structure_returns_nan_on_constant_U()
     print("ALL selective TESTS PASS")

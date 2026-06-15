@@ -83,6 +83,9 @@ def oof_dual_head(
             continue
         mu, sd = X[tr].mean(0), X[tr].std(0) + 1e-6
         Xs = (X - mu) / sd
+        torch.manual_seed(
+            seed + f
+        )  # seed BEFORE construction so weight init is deterministic (audit E)
         model = DualHeadOracle(
             n_genes=g, in_dim=X.shape[1], trunk_dims=trunk, dropout=0.1
         )
@@ -99,6 +102,17 @@ def oof_dual_head(
 def _efficiency(order_score: np.ndarray, error: np.ndarray) -> dict:
     """Normalized selective efficiency in [0,1]: 1 = oracle deferral, 0 = random. Comparable across systems
     with different base error scales (the fair "selective-risk efficiency" gain, plan.md Phase-3 gate)."""
+    # audit B: a constant order_score (e.g. U fully floor-clipped to 0) makes argsort an arbitrary tie-order,
+    # so efficiency would be a meaningless sort artifact -> return NaN, not a fabricated number.
+    if np.ptp(np.asarray(order_score, dtype=float)) < 1e-12:
+        return {
+            "aurc": float("nan"),
+            "aurc_oracle": float("nan"),
+            "full_risk": float(np.mean(error)),
+            "efficiency": float("nan"),
+            "risk50": float("nan"),
+            "degenerate": True,
+        }
     curve = risk_coverage_curve(order_score, error)
     a = aurc(curve)
     a_oracle = aurc(risk_coverage_curve(error, error))  # defer true-highest-error first
@@ -116,6 +130,7 @@ def _efficiency(order_score: np.ndarray, error: np.ndarray) -> dict:
         "full_risk": a_random,
         "efficiency": eff,
         "risk50": risk50,
+        "degenerate": False,
     }
 
 
@@ -173,6 +188,14 @@ def main() -> int:
     res_rf = run_oracle(triad, sigma2_reg=sigma2_reg, predictor="rf", seed=args.seed)
     U_rf = res_rf.U
     error_rf = res_rf.resid2.mean(0)  # per-gene OOF MSE on the cleaner target
+    # audit A: U_rf is a clipped monotone transform of error_rf (same OOF residuals), so Spearman(U_rf,
+    # error_rf) is DEFINITIONALLY high -- NOT an independent calibration. The pre-registered independent
+    # check (prereg 11-C) is whether U_rf ranks a DIFFERENT architecture's (knn f') errors: Spearman(U_rf,
+    # error_knn). This is cluster-free (knn is already in oracle.py).
+    res_knn = run_oracle(
+        triad, sigma2_reg=sigma2_reg, predictor="knn", seed=args.seed + 101
+    )
+    error_knn = res_knn.resid2.mean(0)
 
     # ---- trained: dual-head oracle on the SAME frozen embeddings + splits ----------------------------
     cfg = TrainConfig(
@@ -204,9 +227,16 @@ def main() -> int:
     # set so the RF side is not assessed only on DDH-easy genes), did the trained head shrink U vs RF?
     pred = error_rf <= np.percentile(error_rf, 33)
     c1 = (float(np.median(U_rf[pred])), float(np.median(U_ddh[pred])))
-    sp_rf = spearmanr(U_rf, error_rf).correlation
-    sp_ddh = spearmanr(U_ddh, error_ddh).correlation
+    sp_rf_self = spearmanr(
+        U_rf, error_rf
+    ).correlation  # DEFINITIONAL (U_rf derived from error_rf)
+    sp_rf_cross = spearmanr(
+        U_rf, error_knn
+    ).correlation  # INDEPENDENT: U_rf ranks the knn f' errors (A)
     sp_rawvar = spearmanr(rawvar_ddh, error_ddh).correlation
+    ddh_degenerate = bool(
+        np.ptp(U_ddh) < 1e-12
+    )  # frozen variance head fully floor-clips U to 0
     # epistemic=zeros: the DDH is single-seed, so spatial_structure tests the RAW residual variance on the
     # top-U genes (an UPPER BOUND on aleatoric; the RF path subtracts a bootstrap-ensemble epistemic). Any
     # structure found here is therefore conservative -- compare against the RF Moran's I with that caveat.
@@ -241,9 +271,19 @@ def main() -> int:
         f"audit-C1 (U on identifiable genes, lower=better):  RF={c1[0]:.3f}  DDH={c1[1]:.3f}"
     )
     print(
-        f"deferral calibration Spearman(score,error):  RF-U={sp_rf:.3f}  DDH-U={sp_ddh:.3f}  "
-        f"DDH-rawvar={sp_rawvar:.3f}"
+        f"Spearman(U_rf, error_rf)={sp_rf_self:.3f}  [SELF-REFERENTIAL: U_rf derived from the same OOF "
+        "residuals as error_rf -- NOT an independent calibration]"
     )
+    print(
+        f"Spearman(U_rf, error_knn)={sp_rf_cross:.3f}  [INDEPENDENT f' (knn) calibration -- the pre-registered "
+        "non-circular check, prereg 11-C]  DDH-rawvar(self)={:.3f}".format(sp_rawvar)
+    )
+    if ddh_degenerate:
+        print(
+            "  [DEGENERATE] U_ddh is fully floor-clipped to 0 on every gene -> DDH-U efficiency, DDH-U "
+            "Spearman, and DDH-U Moran's I are UNDEFINED (constant score). The honest statement is: the "
+            "frozen variance head collapses U to zero; it is NOT a measured negative deferral."
+        )
     print(
         f"DDH top-U spatial structure: Moran's I={ddh_struct['morans_i']:.3f} (p={ddh_struct['pvalue']:.3f})"
     )
@@ -290,6 +330,17 @@ def main() -> int:
         error_rf=error_rf,
         error_ddh=error_ddh,
         rawvar_ddh=rawvar_ddh,
+        error_knn=error_knn,
+        z_var=z_est.var(
+            0
+        ),  # so R^2 = 1 - error/z_var is recomputable from the artifact (audit K)
+        sp_rf_self=np.float64(sp_rf_self),
+        sp_rf_cross=np.float64(sp_rf_cross),  # the independent f' calibration (audit A)
+        ddh_degenerate=np.bool_(ddh_degenerate),
+        git_sha=np.array(
+            _stamp(repo)
+        ),  # repro stamp persisted, not just printed (audit J)
+        seed=np.int64(args.seed),
         curve_rf=risk_coverage_curve(U_rf, error_rf),
         curve_ddh=risk_coverage_curve(U_ddh, error_ddh),
         curve_rawvar_ddh=risk_coverage_curve(rawvar_ddh, error_ddh),
@@ -298,8 +349,12 @@ def main() -> int:
 
     # ---- honest verdict -------------------------------------------------------------------------------
     tightened = c1[1] <= c1[0] + 1e-6
-    more_efficient = eff_rankDDH["efficiency"] >= eff_rankRF["efficiency"]
-    structured = ddh_struct["pvalue"] < 0.05
+    # when U_ddh is degenerate (fully clipped), DDH deferral is UNDEFINED, not "worse" -- don't credit a
+    # fake number either way; the verdict falls back to MIXED with the honest degeneracy note.
+    more_efficient = (not ddh_degenerate) and (
+        eff_rankDDH["efficiency"] >= eff_rankRF["efficiency"]
+    )
+    structured = (not ddh_degenerate) and (ddh_struct["pvalue"] < 0.05)
     print("-" * 72)
     if tightened and more_efficient and structured:
         print(
@@ -308,11 +363,17 @@ def main() -> int:
             "end-to-end backbone fine-tune (cluster) is the next lever to push R^2 + retained utility."
         )
         return 0
+    ddh_note = (
+        "DDH-U fully collapsed to 0 (degenerate -- efficiency UNDEFINED, not a measured negative)"
+        if ddh_degenerate
+        else f"DDH-defers-better={more_efficient}"
+    )
     print(
         "READOUT: MIXED -- report straight. "
-        f"U tightened={tightened}, DDH-defers-better={more_efficient}, U-structured={structured}. "
-        "On frozen DINOv2 embeddings the trained head may not yet beat the RF baseline; the end-to-end "
-        "fine-tune (a stronger f) is the pre-registered bet. Not a kill -- a frozen-substrate lower bound."
+        f"U tightened={tightened}, {ddh_note}, U-structured={structured}. "
+        f"Independent calibration Spearman(U_rf, error_knn)={sp_rf_cross:.3f} (the non-circular check). "
+        "On frozen DINOv2 embeddings the frozen variance head collapses; the end-to-end fine-tune (a "
+        "stronger f) is the pre-registered bet. Not a kill -- a frozen-substrate lower bound."
     )
     return 1
 
