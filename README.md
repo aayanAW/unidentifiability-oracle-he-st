@@ -32,7 +32,7 @@ validates the method machinery before any download. The real-data swap point is 
 
 ```bash
 python experiments/feasibility_breast.py --synthetic        # plumbing + logic check (no download)
-bash scripts/fetch_data.sh                                  # download GSE243280 Rep1/Rep2 (large)
+bash scripts/fetch_data.sh data full                        # download GSE243280 Rep1/Rep2 + H&E (large)
 python scripts/check_panel.py data/rep1 data/rep2           # confirm identical Xenium panel
 python experiments/feasibility_breast.py --real data/       # the real gate (after wiring loaders.py)
 ```

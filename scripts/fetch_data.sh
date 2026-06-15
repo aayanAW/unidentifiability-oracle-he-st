@@ -16,7 +16,7 @@ set -euo pipefail
 OUT="${1:-data}"
 MODE="${2:-noise}"
 BASE="https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM7780nnn"
-PY="${PYTHON:-python3}"
+PY="${PYTHON:-$(command -v python3 || command -v python)}"  # python3 if present, else python (containers vary)
 
 # NB: no associative arrays (bash 3.2, the macOS default, lacks `declare -A`) -- audit SB2.
 gsm_of() { case "$1" in rep1) echo GSM7780153;; rep2) echo GSM7780154;; esac; }
