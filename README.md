@@ -24,22 +24,41 @@ See the evidence chain and design docs:
 
 ## Status
 
-Phase 0 (repo) + Phase 1 (feasibility) harness. **No real data committed.** The feasibility experiment
-runs on a synthetic simulator with _planted_ ground truth by default (`--synthetic`), so the gate script
-validates the method machinery before any download. The real-data swap point is `src/loaders.py`.
+Cluster-free build **COMPLETE** (rollouts 1–20): real GSE243280 breast loader, the §6 Xenium-replicate
+noise floor, the trained dual-head oracle + independent calibration, the post-hoc conformal layer (H1),
+and the selective×conformal product are all built, audited (ultracode rollout 18 → fixed 19 → reviewed
+20), and green (8 test suites). **No real data is committed** (gitignored — fetch it, see below). All
+current results are **exploratory** (frozen ungated DINOv2-S, breast only); the confirmatory end-to-end +
+UNI + multi-organ run is the GPU step. The real-data swap point is `src/loaders.py`.
 
-## The decisive test (Phase 1)
+## Quickstart — real breast results (Xenium + H&E)
+
+These steps reproduce the corrected rollout-18/19 numbers on real data. Steps 3–6 need **only** Xenium +
+H&E (fetched in step 1) — **no Visium, no UNI required**.
 
 ```bash
-python experiments/feasibility_breast.py --synthetic        # plumbing + logic check (no download)
-bash scripts/fetch_data.sh data full                        # download GSE243280 Rep1/Rep2 + H&E (large)
-python scripts/check_panel.py data/rep1 data/rep2           # confirm identical Xenium panel
-python experiments/feasibility_breast.py --real data/       # the real gate (after wiring loaders.py)
+python experiments/feasibility_breast.py --synthetic              # 0) plumbing + logic check (no download)
+bash scripts/fetch_data.sh data full                              # 1) Rep1/Rep2 Xenium + post-Xenium H&E (~4 GB)
+python scripts/check_panel.py data/rep1 data/rep2                 # 2) confirm identical 313-gene panel
+python experiments/noise_floor_breast.py data --bin-um 300        # 3) §6 control (K4) -- the first real result
+python experiments/trained_oracle_breast.py data --bin-um 300     # 4) trained oracle + indep. calibration 0.601
+python experiments/conformal_breast.py data --bin-um 300          # 5) H1 spatial coverage (Moran p=0.005)
+python experiments/selective_conformal_breast.py data --bin-um 300 # 6) the selective×conformal product
 ```
 
-Pre-registered verdict (`feasibility.md`): **CONFIRM** if ≥20% panel genes show structured `U`
-(FDR-corrected) AND deferral↔U AUROC − deferral↔dropout AUROC ≥ 0.10 under **both** `f` and an
-independent `f'`. **KILL** if <5%, or `U` spatially white, or AUROC gap <0.05.
+On a GPU box pass `--device cuda` to steps 4/6. Encoders fall back to ungated DINOv2-S (run = EXPLORATORY)
+unless UNI/Virchow2 access is configured (`hf auth login` with an **institutional-email** HF account),
+in which case pass `--encoder uni` for a confirmatory morphology substrate.
+
+### Full-triad separation gate (H2 — needs Visium, not in the fetch script)
+
+`python experiments/feasibility_breast.py --real data/` additionally tests **H2** (deferrals concentrate
+on high-`U`, not high-dropout), which requires the paired breast **Visium** (CytAssist FFPE) as the
+dropout target under `data/visium/` (`*filtered_feature_bc_matrix.h5` + spatial positions). `fetch_data.sh`
+does **not** download Visium yet — source it separately before running this gate, or it raises a
+`FileNotFoundError` naming the missing dir. Pre-registered verdict (`feasibility.md`): **CONFIRM** if ≥20%
+panel genes show structured `U` (FDR-corrected) AND deferral↔U − deferral↔dropout AUROC ≥ 0.10 under
+**both** `f` and an independent `f'`; **KILL** if <5%, `U` spatially white, or AUROC gap <0.05.
 
 ## Gate scripts (the test suite)
 
